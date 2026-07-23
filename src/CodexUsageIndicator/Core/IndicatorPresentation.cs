@@ -37,9 +37,14 @@ public static class IndicatorPresentation
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(accountFingerprint);
 
-        var selected = windows
+        var candidates = windows.ToList();
+        if (candidates.Any(window => window.UsedPercent is < 0 or > 100))
+        {
+            throw new InvalidOperationException("A rate-limit percentage is outside the supported range.");
+        }
+
+        var selected = candidates
             .Where(window => window.ResetsAt > DateTimeOffset.UtcNow)
-            .Select(window => new RateLimitWindow(Math.Clamp(window.UsedPercent, 0, 100), window.ResetsAt))
             .OrderByDescending(window => window.UsedPercent)
             .ThenBy(window => window.ResetsAt)
             .FirstOrDefault();
@@ -73,7 +78,7 @@ public static class IndicatorPresentation
 
     public static OverlayLayout SelectLayout(double codexWindowWidth)
     {
-        var availableWidth = Math.Max(0, codexWindowWidth - ReservedTitleBarWidth);
+        var availableWidth = GetAvailableOverlayWidth(codexWindowWidth);
         return availableWidth switch
         {
             >= 430 => OverlayLayout.Full,
@@ -82,6 +87,8 @@ public static class IndicatorPresentation
             _ => OverlayLayout.Hidden
         };
     }
+
+    public static double GetAvailableOverlayWidth(double codexWindowWidth) => Math.Max(0, codexWindowWidth - ReservedTitleBarWidth);
 
     public static string FormatResetTime(DateTimeOffset resetAt)
     {

@@ -55,13 +55,24 @@ public static class AppServerResponses
 
     private static void AddWindow(JsonElement snapshot, string propertyName, ICollection<RateLimitWindow> windows)
     {
-        if (!snapshot.TryGetProperty(propertyName, out var window) || window.ValueKind != JsonValueKind.Object ||
-            !window.TryGetProperty("usedPercent", out var usedPercent) || usedPercent.ValueKind != JsonValueKind.Number ||
-            !window.TryGetProperty("resetsAt", out var resetsAt) || resetsAt.ValueKind != JsonValueKind.Number)
+        if (!snapshot.TryGetProperty(propertyName, out var window))
         {
             return;
         }
 
-        windows.Add(new RateLimitWindow(usedPercent.GetInt32(), DateTimeOffset.FromUnixTimeSeconds(resetsAt.GetInt64())));
+        if (window.ValueKind != JsonValueKind.Object ||
+            !window.TryGetProperty("usedPercent", out var usedPercent) || usedPercent.ValueKind != JsonValueKind.Number ||
+            !window.TryGetProperty("resetsAt", out var resetsAt) || resetsAt.ValueKind != JsonValueKind.Number)
+        {
+            throw new InvalidOperationException($"The Codex app-server {propertyName} rate-limit window is malformed.");
+        }
+
+        var percent = usedPercent.GetInt32();
+        if (percent is < 0 or > 100)
+        {
+            throw new InvalidOperationException($"The Codex app-server {propertyName} rate-limit percentage is outside the supported range.");
+        }
+
+        windows.Add(new RateLimitWindow(percent, DateTimeOffset.FromUnixTimeSeconds(resetsAt.GetInt64())));
     }
 }
