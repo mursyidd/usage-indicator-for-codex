@@ -29,7 +29,7 @@ internal sealed class IndicatorCoordinator : IDisposable
         _settings = settingsStore.Load();
         _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(5) };
         _refreshTimer.Tick += async (_, _) => await RefreshAsync(force: true);
-        _tracker.ActiveWindowChanged += TrackerOnActiveWindowChanged;
+        _tracker.WindowChanged += TrackerOnWindowChanged;
         _overlay.RetryRequested += async (_, _) => await RefreshAsync(force: true);
     }
 
@@ -45,18 +45,52 @@ internal sealed class IndicatorCoordinator : IDisposable
         _settingsStore.Save(_settings);
         if (_settings.Enabled)
         {
+            if (_activeCodexWindow != 0)
+            {
+                _overlay.SetOwner(_activeCodexWindow);
+            }
+
             UpdatePlacement();
             _ = RefreshAsync(force: true);
         }
         else
         {
+            InvalidateUsage();
+            _refreshRunner.Cancel();
             _overlay.Hide();
         }
     }
 
     public bool IsEnabled => _settings.Enabled;
 
-    private void TrackerOnActiveWindowChanged(object? sender, nint? windowHandle)
+    public Task<bool> RevalidateAsync()
+    {
+        if (_disposed)
+        {
+            return Task.FromResult(false);
+        }
+
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ = CompleteRevalidationWhenRefreshFinishesAsync(
+            _refreshRunner.ReplaceAsync(cancellationToken => RevalidateOnceAsync(cancellationToken, completion)),
+            completion);
+        return completion.Task;
+    }
+
+    private static async Task CompleteRevalidationWhenRefreshFinishesAsync(Task refresh, TaskCompletionSource<bool> completion)
+    {
+        try
+        {
+            await refresh;
+        }
+        catch
+        {
+        }
+
+        completion.TrySetResult(false);
+    }
+
+    private void TrackerOnWindowChanged(object? sender, CodexWindowChangedEventArgs eventArgs)
     {
         _ = _overlay.Dispatcher.InvokeAsync(async () =>
         {
@@ -65,33 +99,41 @@ internal sealed class IndicatorCoordinator : IDisposable
                 return;
             }
 
-            if (windowHandle is null)
+            if (eventArgs.Change == CodexWindowChange.Detached || eventArgs.WindowHandle is null)
             {
                 _activeCodexWindow = 0;
                 InvalidateUsage();
+                _refreshRunner.Cancel();
+                _overlay.SetOwner(0);
                 _overlay.Hide();
                 return;
             }
 
-            var changedWindow = _activeCodexWindow != windowHandle.Value;
-            _activeCodexWindow = windowHandle.Value;
+            _activeCodexWindow = eventArgs.WindowHandle.Value;
             if (!_settings.Enabled)
             {
                 _overlay.Hide();
                 return;
             }
 
+            _overlay.SetOwner(_activeCodexWindow);
             UpdatePlacement();
-            if (changedWindow || DateTimeOffset.UtcNow - _lastRefresh > TimeSpan.FromMinutes(1))
+            if (eventArgs.Change == CodexWindowChange.BoundsChanged)
+            {
+                return;
+            }
+
+            if (eventArgs.Change == CodexWindowChange.Attached ||
+                (eventArgs.Change == CodexWindowChange.Activated && DateTimeOffset.UtcNow - _lastRefresh > TimeSpan.FromMinutes(1)))
             {
                 await RefreshAsync(force: true);
             }
         });
     }
 
-    private Task RefreshAsync(bool force) => _refreshRunner.RunAsync(() => RefreshOnceAsync(force));
+    private Task RefreshAsync(bool force) => _refreshRunner.RunAsync(cancellationToken => RefreshOnceAsync(force, cancellationToken));
 
-    private async Task RefreshOnceAsync(bool force)
+    private async Task RefreshOnceAsync(bool force, CancellationToken cancellationToken)
     {
         if (_disposed || !_settings.Enabled || _activeCodexWindow == 0 || (!force && DateTimeOffset.UtcNow - _lastRefresh < TimeSpan.FromMinutes(1)))
         {
@@ -102,21 +144,16 @@ internal sealed class IndicatorCoordinator : IDisposable
         Render(IndicatorState.Loading, null);
         try
         {
-            var snapshot = await _usageProvider.ReadAsync(CancellationToken.None);
+            var snapshot = await _usageProvider.ReadAsync(cancellationToken);
             if (_disposed || generation != _refreshGeneration || _activeCodexWindow == 0)
             {
                 return;
             }
 
-            if (_snapshot is not null && !string.Equals(_snapshot.AccountFingerprint, snapshot.AccountFingerprint, StringComparison.Ordinal))
-            {
-                InvalidateUsage();
-                Render(IndicatorState.Loading, null);
-            }
-
-            _snapshot = snapshot;
-            _lastRefresh = DateTimeOffset.UtcNow;
-            Render(IndicatorState.Available, snapshot);
+            ApplySnapshot(snapshot);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
         }
         catch (Exception)
         {
@@ -126,6 +163,52 @@ internal sealed class IndicatorCoordinator : IDisposable
                 Render(IndicatorState.Unavailable, null);
             }
         }
+    }
+
+    private async Task RevalidateOnceAsync(CancellationToken cancellationToken, TaskCompletionSource<bool> completion)
+    {
+        try
+        {
+            var snapshot = await _usageProvider.ReadAsync(cancellationToken);
+            if (_disposed || cancellationToken.IsCancellationRequested)
+            {
+                completion.TrySetResult(false);
+                return;
+            }
+
+            if (_settings.Enabled && _activeCodexWindow != 0)
+            {
+                ApplySnapshot(snapshot);
+            }
+
+            completion.TrySetResult(true);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            completion.TrySetResult(false);
+        }
+        catch (Exception)
+        {
+            if (!_disposed && _settings.Enabled && _activeCodexWindow != 0)
+            {
+                Render(IndicatorState.Unavailable, null);
+            }
+
+            completion.TrySetResult(false);
+        }
+    }
+
+    private void ApplySnapshot(UsageSnapshot snapshot)
+    {
+        if (_snapshot is not null && !string.Equals(_snapshot.AccountFingerprint, snapshot.AccountFingerprint, StringComparison.Ordinal))
+        {
+            InvalidateUsage();
+            Render(IndicatorState.Loading, null);
+        }
+
+        _snapshot = snapshot;
+        _lastRefresh = DateTimeOffset.UtcNow;
+        Render(IndicatorState.Available, snapshot);
     }
 
     private void InvalidateUsage()
@@ -143,14 +226,13 @@ internal sealed class IndicatorCoordinator : IDisposable
             return;
         }
 
-        var layout = IndicatorPresentation.SelectLayout(rect.Width);
+        var layout = _overlay.Render(state, snapshot, IndicatorPresentation.GetAvailableOverlayWidth(rect.Width));
         if (layout == OverlayLayout.Hidden)
         {
             _overlay.Hide();
             return;
         }
 
-        _overlay.Render(state, snapshot, layout);
         _overlay.Show();
         _overlay.Position(_activeCodexWindow, rect, _settings);
     }
@@ -169,7 +251,8 @@ internal sealed class IndicatorCoordinator : IDisposable
 
         _disposed = true;
         _refreshTimer.Stop();
-        _tracker.ActiveWindowChanged -= TrackerOnActiveWindowChanged;
+        _tracker.WindowChanged -= TrackerOnWindowChanged;
+        _refreshRunner.Cancel();
         _tracker.Dispose();
         _overlay.Close();
     }

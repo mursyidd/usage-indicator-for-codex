@@ -3,6 +3,20 @@ using CodexUsageIndicator.Interop;
 
 namespace CodexUsageIndicator.Services;
 
+internal enum CodexWindowChange
+{
+    Attached,
+    Activated,
+    BoundsChanged,
+    Detached
+}
+
+internal sealed class CodexWindowChangedEventArgs(nint? windowHandle, CodexWindowChange change) : EventArgs
+{
+    public nint? WindowHandle { get; } = windowHandle;
+    public CodexWindowChange Change { get; } = change;
+}
+
 internal sealed class CodexWindowTracker : IDisposable
 {
     internal const string CodexPackageFamilyName = "OpenAI.Codex_2p2nqsd0c76g0";
@@ -26,7 +40,7 @@ internal sealed class CodexWindowTracker : IDisposable
         _callback = OnWindowEvent;
     }
 
-    public event EventHandler<nint?>? ActiveWindowChanged;
+    public event EventHandler<CodexWindowChangedEventArgs>? WindowChanged;
 
     internal static bool ObservesEvent(uint eventType) => EventTypes.Contains(eventType);
 
@@ -43,27 +57,65 @@ internal sealed class CodexWindowTracker : IDisposable
         }
 
         _attachedWindow = FindMostRecentlyActiveEligibleWindow();
-        PublishAttachedWindow();
+        if (_attachedWindow != 0)
+        {
+            Publish(CodexWindowChange.Attached, _attachedWindow);
+        }
     }
 
     public bool TryGetWindowRect(nint windowHandle, out NativeMethods.Rect rect) => NativeMethods.GetWindowRect(windowHandle, out rect);
 
     private void OnWindowEvent(nint hook, uint eventType, nint hwnd, int idObject, int idChild, uint eventThread, uint eventTime)
     {
-        if (eventType == NativeMethods.EventObjectLocationChange && !ShouldPublishLocationChange(_attachedWindow, hwnd, idObject))
+        if (eventType == NativeMethods.EventObjectLocationChange)
+        {
+            if (ShouldPublishLocationChange(_attachedWindow, hwnd, idObject))
+            {
+                Publish(CodexWindowChange.BoundsChanged, _attachedWindow);
+            }
+
+            return;
+        }
+
+        if (eventType == NativeMethods.EventSystemForeground)
+        {
+            PublishForegroundWindow();
+            return;
+        }
+
+        if (hwnd == _attachedWindow)
+        {
+            ReevaluateAttachment();
+        }
+    }
+
+    private void PublishForegroundWindow()
+    {
+        var foreground = NativeMethods.GetForegroundWindow();
+        if (!IsEligibleCodexWindow(foreground))
         {
             return;
         }
 
-        PublishAttachedWindow();
+        var previous = _attachedWindow;
+        _attachedWindow = foreground;
+        Publish(previous == _attachedWindow ? CodexWindowChange.Activated : CodexWindowChange.Attached, _attachedWindow);
     }
 
-    private void PublishAttachedWindow()
+    private void ReevaluateAttachment()
     {
-        var foreground = NativeMethods.GetForegroundWindow();
-        _attachedWindow = SelectAttachedWindow(_attachedWindow, foreground, IsEligibleCodexWindow);
-        ActiveWindowChanged?.Invoke(this, _attachedWindow == 0 ? null : _attachedWindow);
+        var previous = _attachedWindow;
+        _attachedWindow = SelectAttachedWindow(_attachedWindow, NativeMethods.GetForegroundWindow(), IsEligibleCodexWindow);
+        if (_attachedWindow == previous)
+        {
+            return;
+        }
+
+        Publish(_attachedWindow == 0 ? CodexWindowChange.Detached : CodexWindowChange.Attached, _attachedWindow);
     }
+
+    private void Publish(CodexWindowChange change, nint? windowHandle) =>
+        WindowChanged?.Invoke(this, new CodexWindowChangedEventArgs(windowHandle, change));
 
     internal static nint SelectAttachedWindow(nint attachedWindow, nint foregroundWindow, Func<nint, bool> isEligible)
     {

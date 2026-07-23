@@ -17,6 +17,9 @@ internal sealed class UsageOverlayWindow : Window
     private readonly TextBlock _usageLabel;
     private readonly TextBlock _dateLabel;
     private readonly TextBlock _separator;
+    private readonly Border _usageToBarSpacer;
+    private readonly Border _barToSeparatorSpacer;
+    private readonly Border _separatorToDateSpacer;
     private OverlayLayout _layout;
     private bool _clickable;
 
@@ -27,7 +30,6 @@ internal sealed class UsageOverlayWindow : Window
         Background = Brushes.Transparent;
         ShowInTaskbar = false;
         ShowActivated = false;
-        Topmost = true;
         Focusable = false;
         Height = 30;
 
@@ -47,11 +49,14 @@ internal sealed class UsageOverlayWindow : Window
 
         var content = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         content.Children.Add(_usageLabel);
-        content.Children.Add(Spacer(8));
+        _usageToBarSpacer = Spacer(8);
+        content.Children.Add(_usageToBarSpacer);
         content.Children.Add(_barTrack);
-        content.Children.Add(Spacer(8));
+        _barToSeparatorSpacer = Spacer(8);
+        content.Children.Add(_barToSeparatorSpacer);
         content.Children.Add(_separator);
-        content.Children.Add(Spacer(8));
+        _separatorToDateSpacer = Spacer(8);
+        content.Children.Add(_separatorToDateSpacer);
         content.Children.Add(_dateLabel);
 
         _container = new Border
@@ -76,27 +81,59 @@ internal sealed class UsageOverlayWindow : Window
 
     public event EventHandler? RetryRequested;
 
-    public void Render(IndicatorState state, UsageSnapshot? snapshot, OverlayLayout layout)
+    internal void SetOwner(nint owner)
     {
-        _layout = layout;
+        var interop = new WindowInteropHelper(this);
+        interop.EnsureHandle();
+        interop.Owner = owner;
+    }
+
+    public OverlayLayout Render(IndicatorState state, UsageSnapshot? snapshot, double availableWidth)
+    {
         var isAvailable = state == IndicatorState.Available && snapshot is not null;
         _clickable = state == IndicatorState.Unavailable;
-        _usageLabel.Text = IndicatorPresentation.FormatUsageLabel(state, snapshot, layout);
         _dateLabel.Text = isAvailable ? IndicatorPresentation.FormatResetTime(snapshot!.ResetsAt) : "—";
 
         var percentage = isAvailable ? snapshot!.RemainingPercent : 0;
         _barFill.Width = _barTrack.Width * percentage / 100;
         _barFill.Background = ToneBrush(isAvailable ? IndicatorPresentation.GetTone(percentage) : IndicatorTone.Neutral);
         _barTrack.Background = state == IndicatorState.Loading
-            ? new SolidColorBrush(Color.FromRgb(100, 100, 110))
-            : new SolidColorBrush(Color.FromRgb(82, 82, 91));
+            ? PatternBrush(dotted: true)
+            : state == IndicatorState.Unavailable
+                ? PatternBrush(dotted: false)
+                : new SolidColorBrush(Color.FromRgb(82, 82, 91));
 
-        _barTrack.Visibility = layout is OverlayLayout.Full or OverlayLayout.Narrow ? Visibility.Visible : Visibility.Collapsed;
-        _separator.Visibility = layout == OverlayLayout.Full ? Visibility.Visible : Visibility.Collapsed;
-        _dateLabel.Visibility = layout == OverlayLayout.Full ? Visibility.Visible : Visibility.Collapsed;
-        _container.Measure(new Size(double.PositiveInfinity, Height));
-        Width = Math.Ceiling(_container.DesiredSize.Width);
+        foreach (var layout in new[] { OverlayLayout.Full, OverlayLayout.Narrow, OverlayLayout.Compact })
+        {
+            ApplyLayout(state, snapshot, layout);
+            _container.InvalidateMeasure();
+            _container.Measure(new Size(double.PositiveInfinity, Height));
+            Width = Math.Ceiling(_container.DesiredSize.Width);
+            if (Width <= availableWidth)
+            {
+                ApplyExtendedStyles();
+                return layout;
+            }
+        }
+
+        _layout = OverlayLayout.Hidden;
+        Width = 0;
         ApplyExtendedStyles();
+        return OverlayLayout.Hidden;
+    }
+
+    private void ApplyLayout(IndicatorState state, UsageSnapshot? snapshot, OverlayLayout layout)
+    {
+        _layout = layout;
+        _usageLabel.Text = IndicatorPresentation.FormatUsageLabel(state, snapshot, layout);
+        var showBar = layout is OverlayLayout.Full or OverlayLayout.Narrow;
+        var showDetails = layout == OverlayLayout.Full;
+        _usageToBarSpacer.Visibility = showBar ? Visibility.Visible : Visibility.Collapsed;
+        _barTrack.Visibility = showBar ? Visibility.Visible : Visibility.Collapsed;
+        _barToSeparatorSpacer.Visibility = showDetails ? Visibility.Visible : Visibility.Collapsed;
+        _separator.Visibility = showDetails ? Visibility.Visible : Visibility.Collapsed;
+        _separatorToDateSpacer.Visibility = showDetails ? Visibility.Visible : Visibility.Collapsed;
+        _dateLabel.Visibility = showDetails ? Visibility.Visible : Visibility.Collapsed;
     }
 
     internal void Position(nint codexWindowHandle, NativeMethods.Rect rect, UserSettings settings)
@@ -113,7 +150,7 @@ internal sealed class UsageOverlayWindow : Window
         var height = Math.Max(1, (int)Math.Ceiling(Height * scale));
         var x = rect.Left + (rect.Width - width) / 2 + (int)Math.Round(settings.HorizontalOffset * scale);
         var y = rect.Top + (int)Math.Round(settings.VerticalOffset * scale);
-        NativeMethods.SetWindowPos(source.Handle, new nint(-1), x, y, width, height,
+        NativeMethods.SetWindowPos(source.Handle, 0, x, y, width, height,
             NativeMethods.SwpNoActivate | NativeMethods.SwpShowWindow | NativeMethods.SwpNoOwnerZOrder);
     }
 
@@ -148,4 +185,27 @@ internal sealed class UsageOverlayWindow : Window
         IndicatorTone.Red => new SolidColorBrush(Color.FromRgb(239, 68, 68)),
         _ => new SolidColorBrush(Color.FromRgb(161, 161, 170))
     };
+
+    private static System.Windows.Media.Brush PatternBrush(bool dotted)
+    {
+        var color = new SolidColorBrush(Color.FromRgb(161, 161, 170));
+        var drawing = new DrawingGroup();
+        if (dotted)
+        {
+            drawing.Children.Add(new GeometryDrawing(color, null, new EllipseGeometry(new Point(3, 2.5), 1, 1)));
+        }
+        else
+        {
+            drawing.Children.Add(new GeometryDrawing(null, new Pen(color, 1), new LineGeometry(new Point(0, 2.5), new Point(6, 2.5))));
+        }
+
+        return new DrawingBrush(drawing)
+        {
+            TileMode = TileMode.Tile,
+            Viewport = new Rect(0, 0, 6, 5),
+            ViewportUnits = BrushMappingMode.Absolute,
+            Viewbox = new Rect(0, 0, 6, 5),
+            ViewboxUnits = BrushMappingMode.Absolute
+        };
+    }
 }
