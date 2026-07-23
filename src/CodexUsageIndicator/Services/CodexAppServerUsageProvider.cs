@@ -21,13 +21,19 @@ public sealed class CodexAppServerUsageProvider : IUsageProvider
 public sealed class CodexCliAppServerReader
 {
     internal const string CliPathEnvironmentVariable = "CODEX_CLI_PATH";
-    private readonly string _cliPath;
+    private readonly IReadOnlyList<string> _cliPaths;
+    private readonly bool _isConfiguredPath;
     private readonly string? _codexHome;
     private readonly TimeSpan _timeout;
 
     public CodexCliAppServerReader(string? codexHome = null)
     {
-        _cliPath = ResolveCliPath();
+        var configuredPath = Environment.GetEnvironmentVariable(CliPathEnvironmentVariable);
+        _cliPaths = ResolveCliPaths(
+            configuredPath,
+            Environment.GetEnvironmentVariable("PATH"),
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
+        _isConfiguredPath = !string.IsNullOrWhiteSpace(configuredPath);
         _codexHome = codexHome;
         _timeout = TimeSpan.FromSeconds(20);
     }
@@ -35,21 +41,50 @@ public sealed class CodexCliAppServerReader
     internal static string ResolveCliPath()
     {
         var configuredPath = Environment.GetEnvironmentVariable(CliPathEnvironmentVariable);
-        var cliPath = string.IsNullOrWhiteSpace(configuredPath)
-            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "codex.cmd")
-            : configuredPath;
+        var cliPaths = ResolveCliPaths(
+            configuredPath,
+            Environment.GetEnvironmentVariable("PATH"),
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
+        return cliPaths.FirstOrDefault() ?? throw new InvalidOperationException("No Codex CLI launcher could be found.");
+    }
 
-        if (!Path.IsPathFullyQualified(cliPath) || !string.Equals(Path.GetExtension(cliPath), ".cmd", StringComparison.OrdinalIgnoreCase))
+    internal static IReadOnlyList<string> ResolveCliPaths(string? configuredPath, string? path, string appDataPath)
+    {
+        if (!string.IsNullOrWhiteSpace(configuredPath))
         {
-            throw new InvalidOperationException($"The {CliPathEnvironmentVariable} value must be a fully qualified .cmd path.");
+            return new[] { ValidateCliPath(configuredPath) };
+        }
+
+        var paths = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddPathCandidates(paths, seen, path, "codex.exe");
+        AddCandidate(paths, seen, Path.Combine(appDataPath, "npm", "codex.cmd"));
+        AddPathCandidates(paths, seen, path, "codex.cmd");
+        return paths;
+    }
+
+    private static string ValidateCliPath(string cliPath)
+    {
+        var extension = Path.GetExtension(cliPath);
+        if (!Path.IsPathFullyQualified(cliPath) ||
+            (!string.Equals(extension, ".cmd", StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(extension, ".exe", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException($"The {CliPathEnvironmentVariable} value must be a fully qualified .exe or .cmd path.");
         }
 
         return Path.GetFullPath(cliPath);
     }
 
     internal CodexCliAppServerReader(string cliPath, string? codexHome, TimeSpan timeout)
+        : this(new[] { ValidateCliPath(cliPath) }, true, codexHome, timeout)
     {
-        _cliPath = cliPath;
+    }
+
+    internal CodexCliAppServerReader(IReadOnlyList<string> cliPaths, bool isConfiguredPath, string? codexHome, TimeSpan timeout)
+    {
+        _cliPaths = cliPaths;
+        _isConfiguredPath = isConfiguredPath;
         _codexHome = codexHome;
         _timeout = timeout;
     }
@@ -91,24 +126,54 @@ public sealed class CodexCliAppServerReader
 
     private Process StartAppServer()
     {
-        if (!File.Exists(_cliPath))
+        Exception? finalLaunchException = null;
+        foreach (var cliPath in _cliPaths)
         {
-            throw new InvalidOperationException("The configured Codex CLI is absent.");
+            try
+            {
+                return StartAppServer(cliPath);
+            }
+            catch (Exception exception) when (IsLaunchFailure(exception))
+            {
+                finalLaunchException = exception;
+                if (_isConfiguredPath)
+                {
+                    break;
+                }
+            }
+        }
+
+        throw new InvalidOperationException(
+            "Codex app-server could not be started.",
+            finalLaunchException ?? new FileNotFoundException("No Codex CLI launcher could be found."));
+    }
+
+    private Process StartAppServer(string cliPath)
+    {
+        if (!File.Exists(cliPath))
+        {
+            throw new FileNotFoundException("The configured Codex CLI is absent.", cliPath);
         }
 
         var startInfo = new ProcessStartInfo
         {
-            FileName = Environment.GetEnvironmentVariable("ComSpec") ?? Path.Combine(Environment.SystemDirectory, "cmd.exe"),
             UseShellExecute = false,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true
         };
-        startInfo.ArgumentList.Add("/d");
-        startInfo.ArgumentList.Add("/s");
-        startInfo.ArgumentList.Add("/c");
-        startInfo.ArgumentList.Add(CreateAppServerCommand(_cliPath));
+        if (string.Equals(Path.GetExtension(cliPath), ".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            startInfo.FileName = cliPath;
+            startInfo.ArgumentList.Add("app-server");
+            startInfo.ArgumentList.Add("--stdio");
+        }
+        else
+        {
+            startInfo.FileName = Environment.GetEnvironmentVariable("ComSpec") ?? Path.Combine(Environment.SystemDirectory, "cmd.exe");
+            startInfo.Arguments = CreateAppServerArguments(cliPath);
+        }
         if (!string.IsNullOrWhiteSpace(_codexHome))
         {
             startInfo.Environment["CODEX_HOME"] = _codexHome;
@@ -120,6 +185,36 @@ public sealed class CodexCliAppServerReader
 
     internal static string CreateAppServerCommand(string cliPath) =>
         $"\"{cliPath}\" app-server --stdio";
+
+    internal static string CreateAppServerArguments(string cliPath) =>
+        $"/d /s /c \"{CreateAppServerCommand(cliPath)}\"";
+
+    private static void AddPathCandidates(ICollection<string> paths, ISet<string> seen, string? path, string fileName)
+    {
+        foreach (var directory in (path ?? string.Empty).Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                AddCandidate(paths, seen, Path.Combine(directory.Trim().Trim('"'), fileName));
+            }
+            catch (ArgumentException)
+            {
+                // Ignore malformed PATH entries and continue checking the remaining entries.
+            }
+        }
+    }
+
+    private static void AddCandidate(ICollection<string> paths, ISet<string> seen, string cliPath)
+    {
+        var fullPath = Path.GetFullPath(cliPath);
+        if (File.Exists(fullPath) && seen.Add(fullPath))
+        {
+            paths.Add(fullPath);
+        }
+    }
+
+    private static bool IsLaunchFailure(Exception exception) =>
+        exception is FileNotFoundException or InvalidOperationException or System.ComponentModel.Win32Exception;
 
     internal static async Task StopProcessTreeAsync(Process process)
     {

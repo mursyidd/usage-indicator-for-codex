@@ -60,6 +60,11 @@ public static class AppServerResponses
             return;
         }
 
+        if (window.ValueKind == JsonValueKind.Null)
+        {
+            return;
+        }
+
         if (window.ValueKind != JsonValueKind.Object ||
             !window.TryGetProperty("usedPercent", out var usedPercent) || usedPercent.ValueKind != JsonValueKind.Number ||
             !window.TryGetProperty("resetsAt", out var resetsAt) || resetsAt.ValueKind != JsonValueKind.Number)

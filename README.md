@@ -17,19 +17,19 @@ The repository does not install or update .NET, Codex CLI, or Codex Desktop. Ups
 
 ## Codex CLI configuration
 
-By default, the companion uses the ordinary per-user npm launcher:
+Without an override, the companion tries local launchers in this order: a native `codex.exe` found on `PATH`, the ordinary per-user npm launcher, then another `codex.cmd` found on `PATH`:
 
 ```text
 %APPDATA%\npm\codex.cmd
 ```
 
-This is an environment-based path, not a developer-specific installation path. To use another installation, set `CODEX_CLI_PATH` to the fully qualified path of its `.cmd` launcher:
+To use a specific installation, set `CODEX_CLI_PATH` to the fully qualified path of its `.exe` or `.cmd` launcher. This explicit override is authoritative and does not fall back to another installation if it cannot start:
 
 ```powershell
 $env:CODEX_CLI_PATH = 'C:\Program Files\Codex CLI\codex.cmd'
 ```
 
-Paths containing spaces are supported. Relative paths, non-`.cmd` files, missing launchers, logged-out CLIs, API-key authentication, incompatible responses, and malformed responses fail closed to `Usage unavailable`. The application intentionally does not search `PATH`, so it cannot silently select a different CLI installation.
+Paths containing spaces are supported. Relative paths, files other than `.exe` or `.cmd`, missing launchers, logged-out CLIs, API-key authentication, incompatible responses, and malformed responses fail closed to `Usage unavailable`. Automatically discovered launchers fall through only when they cannot start; once one starts, all protocol failures fail closed without trying another installation.
 
 After changing the CLI account or launcher, revalidate it:
 

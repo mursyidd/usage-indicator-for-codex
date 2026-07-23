@@ -6,6 +6,15 @@ using System.IO;
 using System.Text.Json;
 using System.Windows;
 
+if (args.Contains("--fake-app-server", StringComparer.OrdinalIgnoreCase))
+{
+    await RunFakeAppServerAsync(
+        args.Contains("--rpc-error", StringComparer.OrdinalIgnoreCase),
+        args.Contains("--hang-after-initialize", StringComparer.OrdinalIgnoreCase),
+        args.Contains("--mark-started", StringComparer.OrdinalIgnoreCase));
+    return 0;
+}
+
 if (args.Contains("--probe", StringComparer.OrdinalIgnoreCase))
 {
     try
@@ -90,12 +99,19 @@ var checks = new (string Name, Action Run)[]
     ("selects the most recently active Codex window on startup", SelectsInitialAttachedWindow),
     ("rejects expired-only usage windows", RejectsExpiredWindows),
     ("parses primary and secondary app-server limits", ParsesRateLimitResponse),
+    ("accepts an absent optional app-server rate-limit window", AcceptsAbsentOptionalRateLimitWindow),
     ("rejects malformed and incompatible app-server responses", RejectsInvalidResponses),
     ("rejects out-of-range rate-limit percentages", RejectsOutOfRangePercentages),
     ("fails closed when the configured CLI is absent", FailsWhenCliIsMissing),
-    ("resolves the CLI path without a machine-specific username", ResolvesPortableCliPath),
-    ("rejects a relative CLI override", RejectsRelativeCliPath),
+    ("accepts exe and cmd CLI overrides", AcceptsExeAndCmdCliOverrides),
+    ("rejects relative and unsupported CLI overrides", RejectsInvalidCliOverrides),
+    ("resolves native exe candidates before cmd candidates", ResolvesNativeExeBeforeCmdCandidates),
+    ("falls through an unlaunchable automatic exe to cmd", FallsThroughUnlaunchableAutomaticExe),
+    ("does not fall through after an explicit launcher fails", DoesNotFallThroughAfterExplicitLauncherFailure),
+    ("does not fall through after a started app-server RPC failure", DoesNotFallThroughAfterStartedRpcFailure),
+    ("cancels an app-server and cleans up its process", CancelsAndCleansUpAppServer),
     ("quotes a CLI path containing spaces", QuotesCliPath),
+    ("runs a spaced cmd launcher through the app-server protocol", RunsSpacedCmdLauncher),
     ("loads valid per-user settings", LoadsValidUserSettings),
     ("falls back atomically for malformed settings", FallsBackForMalformedUserSettings),
     ("rejects invalid setting offsets", RejectsInvalidUserSettingOffsets),
@@ -438,6 +454,21 @@ static void ParsesRateLimitResponse()
     AssertEqual(DateTimeOffset.FromUnixTimeSeconds(secondaryReset), snapshot.ResetsAt);
 }
 
+static void AcceptsAbsentOptionalRateLimitWindow()
+{
+    using var document = JsonDocument.Parse("""
+    {
+      "rateLimits": {
+        "primary": { "usedPercent": 35, "resetsAt": 2000000000 },
+        "secondary": null
+      }
+    }
+    """);
+
+    var snapshot = IndicatorPresentation.SelectMostRestrictive("account", AppServerResponses.ExtractRateLimitWindows(document.RootElement));
+    AssertEqual(65, snapshot.RemainingPercent);
+}
+
 static void RejectsInvalidResponses()
 {
     using var malformedRateLimits = JsonDocument.Parse("""
@@ -487,32 +518,21 @@ static void FailsWhenCliIsMissing()
     AssertThrowsAsync<InvalidOperationException>(() => reader.ReadAsync(CancellationToken.None)).GetAwaiter().GetResult();
 }
 
-static void ResolvesPortableCliPath()
+static void AcceptsExeAndCmdCliOverrides()
 {
-    var configuredPath = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory)!, "tools", "codex.cmd");
-    var previousValue = Environment.GetEnvironmentVariable(CodexCliAppServerReader.CliPathEnvironmentVariable);
-    try
+    foreach (var extension in new[] { ".exe", ".cmd" })
     {
-        Environment.SetEnvironmentVariable(CodexCliAppServerReader.CliPathEnvironmentVariable, configuredPath);
-        AssertEqual(configuredPath, CodexCliAppServerReader.ResolveCliPath());
-    }
-    finally
-    {
-        Environment.SetEnvironmentVariable(CodexCliAppServerReader.CliPathEnvironmentVariable, previousValue);
+        var configuredPath = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory)!, "tools", $"codex{extension}");
+        var paths = CodexCliAppServerReader.ResolveCliPaths(configuredPath, null, Path.GetTempPath());
+        AssertEqual(configuredPath, paths.Single());
     }
 }
 
-static void RejectsRelativeCliPath()
+static void RejectsInvalidCliOverrides()
 {
-    var previousValue = Environment.GetEnvironmentVariable(CodexCliAppServerReader.CliPathEnvironmentVariable);
-    try
+    foreach (var configuredPath in new[] { "codex.cmd", Path.Combine(Path.GetPathRoot(Environment.SystemDirectory)!, "tools", "codex.bat") })
     {
-        Environment.SetEnvironmentVariable(CodexCliAppServerReader.CliPathEnvironmentVariable, "codex.cmd");
-        AssertThrows<InvalidOperationException>(() => { _ = CodexCliAppServerReader.ResolveCliPath(); });
-    }
-    finally
-    {
-        Environment.SetEnvironmentVariable(CodexCliAppServerReader.CliPathEnvironmentVariable, previousValue);
+        AssertThrows<InvalidOperationException>(() => CodexCliAppServerReader.ResolveCliPaths(configuredPath, null, Path.GetTempPath()));
     }
 }
 
@@ -520,6 +540,230 @@ static void QuotesCliPath()
 {
     var cliPath = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory)!, "Program Files", "Codex", "codex.cmd");
     AssertEqual($"\"{cliPath}\" app-server --stdio", CodexCliAppServerReader.CreateAppServerCommand(cliPath));
+    AssertEqual($"/d /s /c \"\"{cliPath}\" app-server --stdio\"", CodexCliAppServerReader.CreateAppServerArguments(cliPath));
+}
+
+static void ResolvesNativeExeBeforeCmdCandidates()
+{
+    WithTemporaryDirectory("Codex Candidate Resolution", directory =>
+    {
+        var pathDirectory = Path.Combine(directory, "path");
+        var appDataDirectory = Path.Combine(directory, "appdata");
+        Directory.CreateDirectory(pathDirectory);
+        Directory.CreateDirectory(Path.Combine(appDataDirectory, "npm"));
+        var exePath = Path.Combine(pathDirectory, "codex.exe");
+        var appDataCmdPath = Path.Combine(appDataDirectory, "npm", "codex.cmd");
+        var pathCmdPath = Path.Combine(pathDirectory, "codex.cmd");
+        File.WriteAllText(exePath, "not an executable");
+        File.WriteAllText(appDataCmdPath, "@echo off");
+        File.WriteAllText(pathCmdPath, "@echo off");
+
+        var paths = CodexCliAppServerReader.ResolveCliPaths(null, pathDirectory, appDataDirectory);
+        AssertEqual(3, paths.Count);
+        AssertEqual(exePath, paths[0]);
+        AssertEqual(appDataCmdPath, paths[1]);
+        AssertEqual(pathCmdPath, paths[2]);
+    });
+}
+
+static void FallsThroughUnlaunchableAutomaticExe()
+{
+    WithTemporaryDirectory("Codex Automatic Fallback", directory =>
+    {
+        var exePath = Path.Combine(directory, "codex.exe");
+        var shimPath = CreateFakeServerShim(directory);
+        File.WriteAllText(exePath, "not an executable");
+
+        var snapshot = new CodexCliAppServerReader(new[] { exePath, shimPath }, false, null, TimeSpan.FromSeconds(5))
+            .ReadAsync(CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
+        AssertEqual(18, snapshot.RemainingPercent);
+    });
+}
+
+static void DoesNotFallThroughAfterStartedRpcFailure()
+{
+    WithTemporaryDirectory("Codex RPC Failure", directory =>
+    {
+        var failingShim = CreateFakeServerShim(directory, "--rpc-error");
+        var fallbackShim = CreateFakeServerShim(directory, "--mark-started", "fallback.cmd");
+        var markerPath = Path.Combine(directory, "fallback-started.txt");
+
+        WithTemporaryEnvironment("CODEX_TEST_SERVER_MARKER", markerPath, () =>
+        {
+            var reader = new CodexCliAppServerReader(new[] { failingShim, fallbackShim }, false, null, TimeSpan.FromSeconds(5));
+            AssertThrowsAsync<InvalidOperationException>(() => reader.ReadAsync(CancellationToken.None)).GetAwaiter().GetResult();
+            AssertEqual(false, File.Exists(markerPath));
+        });
+    });
+}
+
+static void DoesNotFallThroughAfterExplicitLauncherFailure()
+{
+    WithTemporaryDirectory("Codex Explicit Failure", directory =>
+    {
+        var failingExe = Path.Combine(directory, "codex.exe");
+        var fallbackShim = CreateFakeServerShim(directory, "--mark-started", "fallback.cmd");
+        var markerPath = Path.Combine(directory, "fallback-started.txt");
+        File.WriteAllText(failingExe, "not an executable");
+
+        WithTemporaryEnvironment("CODEX_TEST_SERVER_MARKER", markerPath, () =>
+        {
+            var reader = new CodexCliAppServerReader(new[] { failingExe, fallbackShim }, true, null, TimeSpan.FromSeconds(5));
+            AssertThrowsAsync<InvalidOperationException>(() => reader.ReadAsync(CancellationToken.None)).GetAwaiter().GetResult();
+            AssertEqual(false, File.Exists(markerPath));
+        });
+    });
+}
+
+static void CancelsAndCleansUpAppServer()
+{
+    WithTemporaryDirectory("Codex Cancellation", directory =>
+    {
+        var shimPath = CreateFakeServerShim(directory, "--hang-after-initialize");
+        var pidPath = Path.Combine(directory, "server.pid");
+
+        WithTemporaryEnvironment("CODEX_TEST_SERVER_PID_FILE", pidPath, () =>
+        {
+            using var cancellation = new CancellationTokenSource();
+            var task = new CodexCliAppServerReader(shimPath, null, TimeSpan.FromSeconds(5)).ReadAsync(cancellation.Token);
+            WaitForFile(pidPath);
+            cancellation.Cancel();
+            AssertThrowsAsync<OperationCanceledException>(() => task).GetAwaiter().GetResult();
+            AssertEqual(true, HasExited(int.Parse(File.ReadAllText(pidPath))));
+        });
+    });
+}
+
+static void RunsSpacedCmdLauncher()
+{
+    WithTemporaryDirectory("Codex Usage Indicator Cmd Shim", directory =>
+    {
+        var shimPath = CreateFakeServerShim(directory);
+
+        var snapshot = new CodexCliAppServerReader(shimPath, null, TimeSpan.FromSeconds(5))
+            .ReadAsync(CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
+        AssertEqual(18, snapshot.RemainingPercent);
+        AssertEqual(DateTimeOffset.FromUnixTimeSeconds(2_000_000_000), snapshot.ResetsAt);
+        AssertEqual(false, string.IsNullOrWhiteSpace(snapshot.AccountFingerprint));
+    });
+}
+
+static string CreateFakeServerShim(string directory, string? argument = null, string fileName = "codex.cmd")
+{
+    var shimPath = Path.Combine(directory, fileName);
+    File.WriteAllText(shimPath, $"@echo off{Environment.NewLine}{CreateFakeServerInvocation(argument)}{Environment.NewLine}");
+    return shimPath;
+}
+
+static string CreateFakeServerInvocation(string? argument = null)
+{
+    var processPath = Environment.ProcessPath ?? throw new InvalidOperationException("The test host path is unavailable.");
+    var suffix = string.IsNullOrWhiteSpace(argument) ? string.Empty : $" {argument}";
+    if (string.Equals(Path.GetFileNameWithoutExtension(processPath), "dotnet", StringComparison.OrdinalIgnoreCase))
+    {
+        return $"\"{processPath}\" \"{typeof(Program).Assembly.Location}\" --fake-app-server{suffix}";
+    }
+
+    return $"\"{processPath}\" --fake-app-server{suffix}";
+}
+
+static void WithTemporaryDirectory(string name, Action<string> action)
+{
+    var directory = Path.Combine(Path.GetTempPath(), $"{name}-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(directory);
+    try
+    {
+        action(directory);
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
+}
+
+static void WithTemporaryEnvironment(string name, string value, Action action)
+{
+    var previousValue = Environment.GetEnvironmentVariable(name);
+    try
+    {
+        Environment.SetEnvironmentVariable(name, value);
+        action();
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable(name, previousValue);
+    }
+}
+
+static void WaitForFile(string path)
+{
+    var timeout = Stopwatch.StartNew();
+    while (!File.Exists(path))
+    {
+        if (timeout.Elapsed > TimeSpan.FromSeconds(5))
+        {
+            throw new InvalidOperationException("The fake app-server did not start.");
+        }
+
+        Thread.Sleep(10);
+    }
+}
+
+static bool HasExited(int processId)
+{
+    try
+    {
+        using var process = Process.GetProcessById(processId);
+        return process.HasExited;
+    }
+    catch (ArgumentException)
+    {
+        return true;
+    }
+}
+
+static async Task RunFakeAppServerAsync(bool rpcError, bool hangAfterInitialize, bool markStarted)
+{
+    var pidPath = Environment.GetEnvironmentVariable("CODEX_TEST_SERVER_PID_FILE");
+    if (!string.IsNullOrWhiteSpace(pidPath))
+    {
+        await File.WriteAllTextAsync(pidPath, Environment.ProcessId.ToString());
+    }
+
+    var markerPath = Environment.GetEnvironmentVariable("CODEX_TEST_SERVER_MARKER");
+    if (markStarted && !string.IsNullOrWhiteSpace(markerPath))
+    {
+        await File.WriteAllTextAsync(markerPath, "started");
+    }
+
+    while (await Console.In.ReadLineAsync() is { } line)
+    {
+        using var request = JsonDocument.Parse(line);
+        var root = request.RootElement;
+        var id = root.GetProperty("id").GetInt32();
+        var method = root.GetProperty("method").GetString();
+        object response = method switch
+        {
+            "initialize" => new { jsonrpc = "2.0", id, result = new { } },
+            "account/read" when rpcError => new { jsonrpc = "2.0", id, error = new { code = -1, message = "synthetic failure" } },
+            "account/read" => new { jsonrpc = "2.0", id, result = new { account = new { type = "chatgpt", email = "synthetic@example.invalid", planType = "plus" } } },
+            "account/rateLimits/read" => new { jsonrpc = "2.0", id, result = new { rateLimits = new { primary = new { usedPercent = 35, resetsAt = 2_000_000_000 }, secondary = new { usedPercent = 82, resetsAt = 2_000_000_000 } } } },
+            _ => new { jsonrpc = "2.0", id, error = new { code = -1, message = "unexpected method" } }
+        };
+
+        await Console.Out.WriteLineAsync(JsonSerializer.Serialize(response));
+        await Console.Out.FlushAsync();
+        if (hangAfterInitialize && string.Equals(method, "initialize", StringComparison.Ordinal))
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan);
+        }
+    }
 }
 
 static void LoadsValidUserSettings()
