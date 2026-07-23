@@ -31,7 +31,30 @@ $requiredFragments = @(
     'RegDeleteValue(HKCU, InstallerStateKey, PathOwnershipValue)',
     'if CurStep = ssPostInstall then',
     'if CurUninstallStep = usUninstall then',
-    'Flags: nowait postinstall skipifsilent'
+    'Flags: nowait postinstall skipifsilent',
+    'StartupPage := CreateCustomPage(',
+    'wpSelectTasks,',
+    'StartupCheckBox.Caption := ''Start with Windows'';',
+    'StartupCheckBox.Checked := False;',
+    'ExpandConstant(''{app}\bin\usage-indicator.exe'')',
+    'ExecAndCaptureOutput(',
+    'ewWaitUntilTerminated',
+    'GetArrayLength(Output.StdOut) <> 3',
+    'GetArrayLength(Output.StdErr) <> 0',
+    'Output.Error',
+    'IsBooleanStatusRecord(Output.StdOut[0], ''running'')',
+    'IsBooleanStatusRecord(Output.StdOut[1], ''indicator-enabled'')',
+    'Value = Name + '': true''',
+    'Value = Name + '': false''',
+    '''startup: enabled''',
+    '''startup: disabled''',
+    '''startup: unrecognized''',
+    'StartupInitialChecked',
+    'StartupPreferenceKnown',
+    'StartupUserChanged',
+    'ApplyStartupPreference',
+    '''enable-startup''',
+    '''disable-startup'''
 )
 foreach ($fragment in $requiredFragments) {
     if ($script.IndexOf($fragment, [StringComparison]::Ordinal) -lt 0) {
@@ -132,6 +155,91 @@ if ($owned -or $unchangedPath -cne $preexisting -or
 $duplicatePath = "$binPath;$originalPath;$binPath"
 if ((Remove-PathEntryModel $duplicatePath $binPath $true) -cne "$originalPath;$binPath") {
     throw 'Installer PATH model must remove at most one owned matching entry.'
+}
+
+function Get-StartupMutationModel {
+    param(
+        [bool]$PreferenceKnown,
+        [bool]$InitialChecked,
+        [bool]$CurrentChecked,
+        [bool]$UserChanged
+    )
+
+    if (-not $UserChanged) {
+        return 'none'
+    }
+    if ($PreferenceKnown -and $InitialChecked -eq $CurrentChecked) {
+        return 'none'
+    }
+
+    if ($CurrentChecked) {
+        return 'enable-startup'
+    }
+
+    return 'disable-startup'
+}
+
+function Read-StartupStatusModel {
+    param(
+        [string[]]$StdOut,
+        [string[]]$StdErr = @(),
+        [int]$ExitCode = 0,
+        [bool]$LaunchSucceeded = $true,
+        [bool]$CaptureError = $false
+    )
+
+    if (-not $LaunchSucceeded -or $ExitCode -ne 0 -or $CaptureError -or
+        $StdErr.Count -ne 0 -or $StdOut.Count -ne 3) {
+        return $null
+    }
+    if ($StdOut[0] -cnotin @('running: true', 'running: false') -or
+        $StdOut[1] -cnotin @('indicator-enabled: true', 'indicator-enabled: false') -or
+        $StdOut[2] -cnotin @('startup: enabled', 'startup: disabled', 'startup: unrecognized')) {
+        return $null
+    }
+
+    return $StdOut[2].Substring('startup: '.Length)
+}
+
+$validStatus = @('running: false', 'indicator-enabled: true', 'startup: enabled')
+if ((Read-StartupStatusModel -StdOut $validStatus) -cne 'enabled') {
+    throw 'Installer status model rejected the exact complete status contract.'
+}
+foreach ($invalidStatus in @(
+    @(,'running: false'),
+    @('running: false', 'indicator-enabled: true', 'startup: enabled', 'extra'),
+    @('Running: false', 'indicator-enabled: true', 'startup: enabled'),
+    @('running: false', 'indicator-enabled: yes', 'startup: enabled'),
+    @('running: false', 'indicator-enabled: true', 'startup: unknown')
+)) {
+    if ($null -ne (Read-StartupStatusModel -StdOut $invalidStatus)) {
+        throw "Installer status model accepted malformed output: $($invalidStatus -join ' | ')"
+    }
+}
+if ($null -ne (Read-StartupStatusModel -StdOut $validStatus -StdErr @('error')) -or
+    $null -ne (Read-StartupStatusModel -StdOut $validStatus -ExitCode 1) -or
+    $null -ne (Read-StartupStatusModel -StdOut $validStatus -LaunchSucceeded $false) -or
+    $null -ne (Read-StartupStatusModel -StdOut $validStatus -CaptureError $true)) {
+    throw 'Installer status model accepted a failed launch, exit, stderr, or capture result.'
+}
+
+if ((Get-StartupMutationModel $false $false $false $false) -cne 'none') {
+    throw 'Unknown unchanged startup state must be preserved.'
+}
+if ((Get-StartupMutationModel $true $true $true $false) -cne 'none') {
+    throw 'Known enabled startup state must be preserved when unchanged.'
+}
+if ((Get-StartupMutationModel $true $true $false $true) -cne 'disable-startup') {
+    throw 'Explicitly clearing a recognized enabled startup state must disable startup.'
+}
+if ((Get-StartupMutationModel $true $false $true $true) -cne 'enable-startup') {
+    throw 'Explicitly selecting startup must enable startup.'
+}
+if ((Get-StartupMutationModel $false $false $true $true) -cne 'enable-startup') {
+    throw 'Explicit opt-in from unknown state must enable startup.'
+}
+if ((Get-StartupMutationModel $false $false $false $true) -cne 'disable-startup') {
+    throw 'An explicit opt-out from unknown state must disable startup.'
 }
 
 if (-not [string]::IsNullOrWhiteSpace($InstallerPath)) {

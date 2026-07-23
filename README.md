@@ -56,8 +56,17 @@ Only the `bin` directory is added to the current user's `PATH`. The installer
 records ownership only when it adds that exact entry. Uninstall therefore
 preserves a matching PATH entry that existed before installation.
 
-The installer does not enable automatic startup without an explicit command.
-Its finish page may offer to start the application normally.
+The installer includes an optional **Start with Windows** checkbox. It is
+unchecked on a fresh installation, so startup remains an explicit opt-in. On
+upgrade, the installer asks the existing installed CLI for its recognized
+startup state and initializes the checkbox from that result.
+
+If the old CLI is unavailable, too old, malformed, or cannot complete status
+inspection, the installer preserves the existing startup state. It changes
+startup only when the user explicitly changes the checkbox. Task Scheduler
+registration and removal still run through the installed CLI rather than
+duplicating ownership checks in the installer. The finish page may separately
+offer to start the application normally.
 
 ## Unsigned builds and SHA-256
 

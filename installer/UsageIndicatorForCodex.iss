@@ -67,6 +67,175 @@ const
   InstallerStateKey = 'Software\UsageIndicatorForCodex\Installer';
   PathOwnershipValue = 'PathEntryOwned';
 
+var
+  StartupPage: TWizardPage;
+  StartupCheckBox: TNewCheckBox;
+  StartupPageInitialized: Boolean;
+  StartupInitializing: Boolean;
+  StartupInitialChecked: Boolean;
+  StartupPreferenceKnown: Boolean;
+  StartupUserChanged: Boolean;
+
+procedure StartupCheckBoxClick(Sender: TObject);
+begin
+  if not StartupInitializing then
+    StartupUserChanged := True;
+end;
+
+procedure InitializeWizard;
+begin
+  StartupPage := CreateCustomPage(
+    wpSelectTasks,
+    'Startup',
+    'Choose whether Usage Indicator for Codex starts when you sign in.');
+  StartupCheckBox := TNewCheckBox.Create(StartupPage.Surface);
+  StartupCheckBox.Parent := StartupPage.Surface;
+  StartupCheckBox.Caption := 'Start with Windows';
+  StartupCheckBox.Left := 0;
+  StartupCheckBox.Top := ScaleY(8);
+  StartupCheckBox.Width := StartupPage.SurfaceWidth;
+  StartupCheckBox.Checked := False;
+  StartupCheckBox.OnClick := @StartupCheckBoxClick;
+end;
+
+function IsBooleanStatusRecord(const Value, Name: string): Boolean;
+begin
+  Result :=
+    (Value = Name + ': true') or
+    (Value = Name + ': false');
+end;
+
+function TryInspectExistingStartup(
+  var PreferenceKnown, StartupEnabled: Boolean): Boolean;
+var
+  CliPath: string;
+  ResultCode: Integer;
+  Output: TExecOutput;
+  LaunchSucceeded: Boolean;
+begin
+  Result := False;
+  PreferenceKnown := False;
+  StartupEnabled := False;
+  CliPath := ExpandConstant('{app}\bin\usage-indicator.exe');
+  if not FileExists(CliPath) then
+    Exit;
+
+  try
+    LaunchSucceeded := ExecAndCaptureOutput(
+      CliPath,
+      'status',
+      '',
+      SW_SHOWNORMAL,
+      ewWaitUntilTerminated,
+      ResultCode,
+      Output);
+  except
+    Log('Existing startup status inspection failed: ' + GetExceptionMessage);
+    Exit;
+  end;
+
+  if (not LaunchSucceeded) or
+     (ResultCode <> 0) or
+     Output.Error or
+     (GetArrayLength(Output.StdOut) <> 3) or
+     (GetArrayLength(Output.StdErr) <> 0) then
+  begin
+    Log('Existing startup status inspection returned an unusable result.');
+    Exit;
+  end;
+
+  if (not IsBooleanStatusRecord(Output.StdOut[0], 'running')) or
+     (not IsBooleanStatusRecord(Output.StdOut[1], 'indicator-enabled')) or
+     ((Output.StdOut[2] <> 'startup: enabled') and
+      (Output.StdOut[2] <> 'startup: disabled') and
+      (Output.StdOut[2] <> 'startup: unrecognized')) then
+  begin
+    Log('Existing startup status inspection returned malformed records.');
+    Exit;
+  end;
+
+  Result := True;
+  if Output.StdOut[2] = 'startup: enabled' then
+  begin
+    PreferenceKnown := True;
+    StartupEnabled := True;
+  end
+  else if Output.StdOut[2] = 'startup: disabled' then
+  begin
+    PreferenceKnown := True;
+    StartupEnabled := False;
+  end;
+end;
+
+procedure InitializeStartupPage;
+var
+  StartupEnabled: Boolean;
+begin
+  if StartupPageInitialized then
+    Exit;
+
+  StartupPageInitialized := True;
+  TryInspectExistingStartup(StartupPreferenceKnown, StartupEnabled);
+  StartupInitializing := True;
+  if StartupPreferenceKnown then
+    StartupCheckBox.Checked := StartupEnabled
+  else
+    StartupCheckBox.Checked := False;
+  StartupInitialChecked := StartupCheckBox.Checked;
+  StartupUserChanged := False;
+  StartupInitializing := False;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = StartupPage.ID then
+    InitializeStartupPage;
+end;
+
+procedure RunStartupCommand(const Command: string);
+var
+  CliPath: string;
+  ResultCode: Integer;
+  Output: TExecOutput;
+  LaunchSucceeded: Boolean;
+begin
+  CliPath := ExpandConstant('{app}\bin\usage-indicator.exe');
+  try
+    LaunchSucceeded := ExecAndCaptureOutput(
+      CliPath,
+      Command,
+      '',
+      SW_SHOWNORMAL,
+      ewWaitUntilTerminated,
+      ResultCode,
+      Output);
+  except
+    RaiseException(
+      'The startup preference could not be applied. ' + GetExceptionMessage);
+  end;
+
+  if (not LaunchSucceeded) or
+     (ResultCode <> 0) or
+     Output.Error or
+     (GetArrayLength(Output.StdErr) <> 0) then
+    RaiseException('The startup preference could not be applied.');
+end;
+
+procedure ApplyStartupPreference;
+begin
+  if not StartupUserChanged then
+    Exit;
+
+  if StartupPreferenceKnown and
+     (StartupCheckBox.Checked = StartupInitialChecked) then
+    Exit;
+
+  if StartupCheckBox.Checked then
+    RunStartupCommand('enable-startup')
+  else
+    RunStartupCommand('disable-startup');
+end;
+
 function NormalizePathEntry(Value: string): string;
 begin
   Result := Trim(Value);
@@ -198,7 +367,10 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
+  begin
     AddOwnedBinToPath;
+    ApplyStartupPreference;
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
