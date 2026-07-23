@@ -56,6 +56,9 @@ appsettings.*.local.json
 secrets.json
 settings.local.json
 .agents/
+/.ai-bridge/
+/graphify-out/
+/docs/superpowers/
 runtime/
 
 # Logs, caches, temporary files, and crash dumps
