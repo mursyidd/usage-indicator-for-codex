@@ -77,7 +77,12 @@ var checks = new (string Name, Action Run)[]
     ("formats MYT timestamps without a zone label", FormatsMalaysiaTime),
     ("selects every responsive layout", SelectsResponsiveLayouts),
     ("sizes the full overlay to its rendered content", SizesFullOverlayToContent),
+    ("measures layouts against available title-bar space", MeasuresLayoutsAgainstAvailableWidth),
     ("coalesces overlapping refresh requests", CoalescesOverlappingRefreshRequests),
+    ("cancels and replaces refresh requests", CancelsAndReplacesRefreshRequests),
+    ("routes commands to a single primary instance", RoutesCommandsToPrimaryInstance),
+    ("waits for a revalidation command response", WaitsForRevalidationCommandResponse),
+    ("fails command delivery cleanly when no primary pipe exists", FailsCommandDeliveryWithoutPrimaryPipe),
     ("retains the attached Codex window across foreign focus", RetainsAttachedWindowAcrossForeignFocus),
     ("ignores overlay location events while tracking the attached Codex window", IgnoresOverlayLocationEvents),
     ("observes attached Codex windows being hidden", ObservesAttachedWindowHide),
@@ -86,6 +91,7 @@ var checks = new (string Name, Action Run)[]
     ("rejects expired-only usage windows", RejectsExpiredWindows),
     ("parses primary and secondary app-server limits", ParsesRateLimitResponse),
     ("rejects malformed and incompatible app-server responses", RejectsInvalidResponses),
+    ("rejects out-of-range rate-limit percentages", RejectsOutOfRangePercentages),
     ("fails closed when the configured CLI is absent", FailsWhenCliIsMissing),
     ("resolves the CLI path without a machine-specific username", ResolvesPortableCliPath),
     ("rejects a relative CLI override", RejectsRelativeCliPath),
@@ -173,15 +179,53 @@ static void SizesFullOverlayToContent()
         try
         {
             var overlay = new UsageOverlayWindow();
-            overlay.Render(
+            AssertEqual(false, overlay.Topmost);
+            var layout = overlay.Render(
                 IndicatorState.Available,
                 new UsageSnapshot("account", 53, new DateTimeOffset(2026, 7, 29, 0, 23, 0, TimeSpan.Zero)),
-                OverlayLayout.Full);
+                double.PositiveInfinity);
+            AssertEqual(OverlayLayout.Full, layout);
 
             if (overlay.Width >= 455 || overlay.Width < overlay.MinWidth)
             {
                 throw new InvalidOperationException($"Expected content-sized width below 455; received {overlay.Width}.");
             }
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    thread.Join();
+
+    if (failure is not null)
+    {
+        throw failure;
+    }
+}
+
+static void MeasuresLayoutsAgainstAvailableWidth()
+{
+    Exception? failure = null;
+    var thread = new Thread(() =>
+    {
+        try
+        {
+            var overlay = new UsageOverlayWindow();
+            var snapshot = new UsageSnapshot("account", 100, new DateTimeOffset(2026, 7, 29, 0, 23, 0, TimeSpan.Zero));
+            AssertEqual(OverlayLayout.Full, overlay.Render(IndicatorState.Available, snapshot, double.PositiveInfinity));
+            var fullWidth = overlay.Width;
+            var narrow = overlay.Render(IndicatorState.Available, snapshot, fullWidth - 1);
+            if (narrow != OverlayLayout.Narrow)
+            {
+                throw new InvalidOperationException($"Expected Narrow below full width {fullWidth}; received {narrow} at measured width {overlay.Width}.");
+            }
+            var narrowWidth = overlay.Width;
+            AssertEqual(OverlayLayout.Compact, overlay.Render(IndicatorState.Available, snapshot, narrowWidth - 1));
+            AssertEqual(true, overlay.Width <= narrowWidth - 1);
+            AssertEqual(OverlayLayout.Hidden, overlay.Render(IndicatorState.Available, snapshot, overlay.Width - 1));
         }
         catch (Exception exception)
         {
@@ -205,7 +249,7 @@ static void CoalescesOverlappingRefreshRequests()
     var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var executions = 0;
 
-    async Task Refresh()
+    async Task Refresh(CancellationToken _)
     {
         executions++;
         if (executions == 1)
@@ -223,6 +267,92 @@ static void CoalescesOverlappingRefreshRequests()
     Task.WhenAll(first, second, third).GetAwaiter().GetResult();
 
     AssertEqual(2, executions);
+}
+
+static void CancelsAndReplacesRefreshRequests()
+{
+    var runner = new CoalescingRefreshRunner();
+    var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var firstCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var replacementRan = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    async Task First(CancellationToken cancellationToken)
+    {
+        firstStarted.SetResult();
+        try
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            firstCancelled.SetResult();
+            throw;
+        }
+    }
+
+    Task Replacement(CancellationToken _)
+    {
+        replacementRan.SetResult();
+        return Task.CompletedTask;
+    }
+
+    var first = runner.RunAsync(First);
+    firstStarted.Task.GetAwaiter().GetResult();
+    var replacement = runner.ReplaceAsync(Replacement);
+    Task.WhenAll(first, replacement).GetAwaiter().GetResult();
+
+    AssertEqual(true, firstCancelled.Task.IsCompleted);
+    AssertEqual(true, replacementRan.Task.IsCompleted);
+}
+
+static void RoutesCommandsToPrimaryInstance()
+{
+    var userIdentity = $"S-1-5-21-{Guid.NewGuid():N}";
+    using var primary = new SingleInstanceService(userIdentity);
+    SingleInstanceService? secondary = null;
+    var secondaryThread = new Thread(() => secondary = new SingleInstanceService(userIdentity));
+    secondaryThread.Start();
+    secondaryThread.Join();
+    using var secondaryInstance = secondary ?? throw new InvalidOperationException("The secondary instance was not created.");
+    AssertEqual(true, primary.IsPrimary);
+    AssertEqual(false, secondaryInstance.IsPrimary);
+
+    InstanceCommand? received = null;
+    primary.Start((command, _) =>
+    {
+        received = command;
+        return Task.FromResult(command == InstanceCommand.Toggle);
+    });
+
+    var result = SingleInstanceService.TrySendAsync(primary.PipeName, InstanceCommand.Toggle).GetAwaiter().GetResult();
+    AssertEqual(true, result ?? false);
+    AssertEqual(InstanceCommand.Toggle, received ?? throw new InvalidOperationException("The primary did not receive a command."));
+}
+
+static void WaitsForRevalidationCommandResponse()
+{
+    var userIdentity = $"S-1-5-21-{Guid.NewGuid():N}";
+    using var primary = new SingleInstanceService(userIdentity);
+    primary.Start(async (command, cancellationToken) =>
+    {
+        AssertEqual(InstanceCommand.RevalidateCli, command);
+        await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+        return true;
+    });
+
+    var result = SingleInstanceService.TrySendAsync(primary.PipeName, InstanceCommand.RevalidateCli).GetAwaiter().GetResult();
+    AssertEqual(true, result ?? false);
+}
+
+static void FailsCommandDeliveryWithoutPrimaryPipe()
+{
+    var result = SingleInstanceService.TrySendAsync($"CodexUsageIndicator-missing-{Guid.NewGuid():N}", InstanceCommand.Toggle)
+        .GetAwaiter()
+        .GetResult();
+    if (result is not null)
+    {
+        throw new InvalidOperationException("A missing primary pipe must not report a command result.");
+    }
 }
 
 static void RetainsAttachedWindowAcrossForeignFocus()
@@ -320,6 +450,35 @@ static void RejectsInvalidResponses()
     AssertThrows<InvalidOperationException>(() => AppServerResponses.ExtractRateLimitWindows(malformedRateLimits.RootElement));
     AssertThrows<InvalidOperationException>(() => AppServerResponses.CreateAccountFingerprint(apiKeyAccount.RootElement));
     AssertThrows<JsonException>(() => JsonDocument.Parse("not json"));
+}
+
+static void RejectsOutOfRangePercentages()
+{
+    foreach (var usedPercent in new[] { -20, -1, 101, 500 })
+    {
+        using var document = JsonDocument.Parse($$"""
+        {
+          "rateLimits": {
+            "primary": { "usedPercent": {{usedPercent}}, "resetsAt": 2000000000 },
+            "secondary": { "usedPercent": 20, "resetsAt": 2000000000 }
+          }
+        }
+        """);
+
+        AssertThrows<InvalidOperationException>(() => AppServerResponses.ExtractRateLimitWindows(document.RootElement));
+    }
+
+    AssertThrows<InvalidOperationException>(() => IndicatorPresentation.SelectMostRestrictive("account", new[]
+    {
+        new RateLimitWindow(500, DateTimeOffset.UtcNow.AddHours(1))
+    }));
+
+    var snapshot = IndicatorPresentation.SelectMostRestrictive("account", new[]
+    {
+        new RateLimitWindow(0, DateTimeOffset.UtcNow.AddHours(1)),
+        new RateLimitWindow(100, DateTimeOffset.UtcNow.AddHours(2))
+    });
+    AssertEqual(0, snapshot.RemainingPercent);
 }
 
 static void FailsWhenCliIsMissing()
