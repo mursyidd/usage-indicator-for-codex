@@ -3,7 +3,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <AssemblyName>UsageIndicatorForCodex</AssemblyName>
+    <AssemblyName>UsageIndicatorForCodex.Gui</AssemblyName>
     <RootNamespace>UsageIndicatorForCodex</RootNamespace>
     <Product>Usage Indicator for Codex</Product>
     <Description>Displays Codex CLI account usage over the Codex Desktop title bar.</Description>

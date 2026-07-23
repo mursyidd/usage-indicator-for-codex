@@ -32,7 +32,7 @@ Accepted invocations are:
 - no arguments: start the application immediately;
 - `--background`: start the application immediately without changing startup registration;
 - `--install`: register or update startup and exit;
-- `--uninstall`: remove canonical and legacy startup registrations and exit;
+- `--uninstall`: always attempt to remove the canonical startup registration, remove the legacy registration only when it is recognized as owned, and exit;
 - `--toggle`: toggle the running or persisted enabled state and exit;
 - `--revalidate-cli`: perform the existing safe CLI validation and exit;
 - `--exit`: request that a running instance exit and then exit successfully when no instance is running;
@@ -60,9 +60,9 @@ Normal saves use an atomic temporary-file replacement so a crash cannot leave a 
 
 The canonical Task Scheduler task is `UsageIndicatorForCodex`; the legacy task is `CodexUsageIndicator`.
 
-Installation and automatic upgrade migration register or update the canonical task first. Only after successful registration may the legacy task be deleted. Registration failure leaves the legacy task untouched. The canonical task launches the current executable with `--background`, uses the current interactive user, has no execution-time limit, and retains the existing three retries at one-minute intervals.
+Installation and automatic upgrade migration register or update the canonical task first. Only after successful registration may a same-name legacy task be deleted, and only when ownership is positively confirmed. Recognition requires exactly one executable action whose normalized, fully qualified path ends with `CodexUsageIndicator.exe`, with the exact argument `--background`. Unrecognized, ambiguous, multi-action, non-executable, malformed, or unreadable same-name tasks must be preserved. Registration failure leaves the legacy task untouched. The canonical task launches the current executable with `--background`, uses the current interactive user, has no execution-time limit, and retains the existing three retries at one-minute intervals.
 
-A normal launch may perform this narrowly scoped compatibility migration when a legacy task exists, but it must still start the application immediately. `--uninstall` attempts to remove both task identities, ignores only task-not-found results, and surfaces other failures.
+A normal launch may perform this narrowly scoped compatibility migration when a recognized owned legacy task exists, but it must still start the application immediately. `--uninstall` always attempts to remove the canonical task, but removes the legacy task only when it is recognized as owned. Task-not-found results are ignored and other removal failures are surfaced.
 
 ## Cross-Version Instance Coordination
 
@@ -98,7 +98,7 @@ Automated checks must cover:
 - strict command parsing, help, invalid arguments, and `--exit`;
 - canonical and legacy instance exclusion and pipe interoperability;
 - settings precedence, valid migration, invalid legacy fallback, migration races, and atomic saves;
-- canonical startup configuration, create-before-delete migration ordering, and dual-name uninstall;
+- canonical startup configuration, create-before-recognized-delete migration ordering, the full preserve-by-default ownership-recognition matrix, and canonical-always/recognized-legacy-only uninstall;
 - canonical solution/project/assembly/output identities;
 - archive name and prohibited-content checks.
 

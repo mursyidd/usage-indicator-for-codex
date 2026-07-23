@@ -1,0 +1,20 @@
+LIBRARY KERNEL32.DLL
+EXPORTS
+    CloseHandle
+    CreateFileW
+    CreateProcessW
+    DuplicateHandle
+    ExitProcess
+    GetCommandLineW
+    GetConsoleProcessList
+    GetConsoleWindow
+    GetCurrentProcess
+    GetExitCodeProcess
+    GetModuleFileNameW
+    GetProcessHeap
+    GetStdHandle
+    HeapAlloc
+    HeapFree
+    LocalFree
+    WaitForSingleObject
+    WriteFile

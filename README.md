@@ -4,12 +4,17 @@ Usage Indicator for Codex is an independent Windows companion that displays the 
 
 Usage comes from the ChatGPT-authenticated account in a separately installed local Codex CLI. Codex Desktop is not the usage or identity source, and the companion does not correlate the Desktop account with the CLI account. If those accounts differ, the displayed usage can differ from the account visible in Desktop.
 
+![Usage Indicator for Codex attached to the Codex Desktop title bar](docs/images/usage-indicator-context.png)
+
+> The indicator follows the Codex Desktop window and displays usage from the separately authenticated local Codex CLI account.
+
 ## Requirements and support
 
 - Windows 11 x64. Windows 10 and Arm64 are not currently verified.
 - Codex Desktop for the followed window.
 - A separately installed compatible Codex CLI authenticated with ChatGPT.
 - For source development, a .NET SDK capable of targeting `net8.0-windows`.
+- For release packaging, the x64 MSVC compiler, linker, and library manager.
 - For framework-dependent source runs, the x64 .NET 8 Desktop Runtime.
 
 The release archive is a self-contained `win-x64` build and does not require a separately installed .NET runtime. The repository does not install or update .NET, Codex CLI, or Codex Desktop.
@@ -35,6 +40,12 @@ The project does not publish a code-signing identity, so the hash only identifie
 
 Arguments are case-sensitive. Only one command may be supplied. Invalid, duplicate, or combined arguments return a nonzero exit code and do not start the companion.
 
+`UsageIndicatorForCodex.exe` is the public native console launcher. Except for
+the intentionally asynchronous `--background` command, it waits for
+argument-bearing commands so PowerShell receives complete output and the correct
+exit code. The packaged `UsageIndicatorForCodex.Gui.exe` is the internal WPF
+process and is not normally invoked directly.
+
 ```text
 UsageIndicatorForCodex.exe                 Start immediately
 UsageIndicatorForCodex.exe --background    Start immediately; used by Task Scheduler
@@ -58,7 +69,7 @@ From the permanent extracted directory:
 .\UsageIndicatorForCodex.exe --install
 ```
 
-This creates the current user’s `UsageIndicatorForCodex` Task Scheduler logon task. The task launches that exact executable path with `--background`, has no execution-time limit, and retries a crash up to three times at one-minute intervals.
+This creates the current user’s `UsageIndicatorForCodex` Task Scheduler logon task. The task launches the packaged `UsageIndicatorForCodex.Gui.exe` path directly with `--background`, has no execution-time limit, and retries a crash up to three times at one-minute intervals.
 
 If you move the extracted directory, run `--install` again from the new location. Installing from a temporary directory is unsafe because the task retains the exact executable path.
 
@@ -78,6 +89,11 @@ For an update from a canonical release:
 2. Replace the extracted files with the complete contents of the new ZIP.
 3. Launch `UsageIndicatorForCodex.exe` normally.
 4. If the installation directory changed, run `.\UsageIndicatorForCodex.exe --install` again.
+
+Existing canonical startup tasks that point to
+`UsageIndicatorForCodex.exe --background` remain compatible with the native
+launcher. Running `--install` again updates the task to launch
+`UsageIndicatorForCodex.Gui.exe --background` directly.
 
 For a one-time update from the legacy `CodexUsageIndicator` build:
 
@@ -144,6 +160,10 @@ Revalidation reports success or failure only. It does not print identity, tokens
 
 ## Display and controls
 
+![Close-up of the usage percentage, progress bar, and reset time](docs/images/usage-indicator-closeup.png)
+
+> Compact display showing the remaining percentage and the active limit’s reset time.
+
 - `Usage —` means the companion is loading or refreshing.
 - `Usage unavailable` means no verified current CLI-account rate-limit response was available. It never means 0% remaining. Clicking it retries.
 - A percentage appears only after a verified ChatGPT-account response with an active reset window.
@@ -189,14 +209,31 @@ dotnet publish .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj `
   -p:PublishProfile=win-x64-self-contained `
   --output .\artifacts\publish\win-x64
 
+.\scripts\build-launcher.ps1 `
+  -OutputPath .\artifacts\publish\win-x64\UsageIndicatorForCodex.exe
+
 .\scripts\package-release.ps1 `
   -PublishDirectory .\artifacts\publish\win-x64 `
   -ArchivePath .\artifacts\usage-indicator-for-codex-win-x64.zip
+
+.\tests\console-contract.ps1 `
+  -PublishDirectory .\artifacts\publish\win-x64 `
+  -LauncherProbe .\tests\UsageIndicatorForCodex.LauncherProbe\bin\Release\net8.0\UsageIndicatorForCodex.LauncherProbe.exe `
+  -ArchivePath .\artifacts\usage-indicator-for-codex-win-x64.zip
 ```
 
-The packaging script requires the canonical executable and self-contained runtime files. It rejects PDBs, source/build metadata, tests, `.git`, `bin`, and `obj` content before and after compression.
+The packaging script requires both `UsageIndicatorForCodex.exe` and
+`UsageIndicatorForCodex.Gui.exe` plus the self-contained runtime files. It
+rejects PDBs, source/build metadata, tests, `.git`, `bin`, and `obj` content
+before and after compression. The publish contract verifies both PE subsystems,
+PowerShell output ordering, stderr and exit codes, exact argument forwarding,
+asynchronous launcher cleanup, and final ZIP contents.
 
-The CI workflow restores, builds, and tests pushes and pull requests to `master`. Pushing a `v*` tag runs the release workflow, repeats restore/build/test, publishes self-contained `win-x64`, verifies the archive, and creates a GitHub Release containing `usage-indicator-for-codex-win-x64.zip`. Creating or pushing tags remains a maintainer action.
+The CI workflow restores, builds, tests, publishes, packages, and runs the
+publish contract for pushes and pull requests to `master`. Pushing a `v*` tag
+runs the release workflow, repeats the same verification, and creates a GitHub
+Release containing `usage-indicator-for-codex-win-x64.zip`. Creating or pushing
+tags remains a maintainer action.
 
 ## Complete removal
 

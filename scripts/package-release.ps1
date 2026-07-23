@@ -11,6 +11,7 @@ $ErrorActionPreference = 'Stop'
 $expectedArchiveName = 'usage-indicator-for-codex-win-x64.zip'
 $requiredFiles = @(
     'UsageIndicatorForCodex.exe',
+    'UsageIndicatorForCodex.Gui.exe',
     'coreclr.dll',
     'hostfxr.dll',
     'hostpolicy.dll'

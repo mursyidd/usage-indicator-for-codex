@@ -41,12 +41,20 @@ jobs:
           -p:PublishProfile=win-x64-self-contained
           --output $env:RUNNER_TEMP\usage-indicator-for-codex-win-x64
 
+      - name: Build native launcher
+        shell: pwsh
+        run: |
+          $publishDirectory = Join-Path $env:RUNNER_TEMP 'usage-indicator-for-codex-win-x64'
+          .\scripts\build-launcher.ps1 -OutputPath (Join-Path $publishDirectory 'UsageIndicatorForCodex.exe')
+
       - name: Verify and package release
         shell: pwsh
         run: |
           $publishDirectory = Join-Path $env:RUNNER_TEMP 'usage-indicator-for-codex-win-x64'
           $archive = Join-Path $env:RUNNER_TEMP 'usage-indicator-for-codex-win-x64.zip'
+          $probe = '.\tests\UsageIndicatorForCodex.LauncherProbe\bin\Release\net8.0\UsageIndicatorForCodex.LauncherProbe.exe'
           .\scripts\package-release.ps1 -PublishDirectory $publishDirectory -ArchivePath $archive
+          .\tests\console-contract.ps1 -PublishDirectory $publishDirectory -LauncherProbe $probe -ArchivePath $archive
           "RELEASE_ARCHIVE=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Create GitHub Release

@@ -30,3 +30,31 @@ jobs:
 
       - name: Test
         run: dotnet run --project .\tests\UsageIndicatorForCodex.Tests\UsageIndicatorForCodex.Tests.csproj --configuration Release --no-build
+
+      - name: Restore win-x64 runtime
+        run: dotnet restore .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj --runtime win-x64
+
+      - name: Publish self-contained win-x64 release
+        run: >
+          dotnet publish .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --no-restore
+          -p:PublishProfile=win-x64-self-contained
+          --output $env:RUNNER_TEMP\usage-indicator-for-codex-win-x64
+
+      - name: Build native launcher
+        shell: pwsh
+        run: |
+          $publishDirectory = Join-Path $env:RUNNER_TEMP 'usage-indicator-for-codex-win-x64'
+          .\scripts\build-launcher.ps1 -OutputPath (Join-Path $publishDirectory 'UsageIndicatorForCodex.exe')
+
+      - name: Package and verify release contract
+        shell: pwsh
+        run: |
+          $publishDirectory = Join-Path $env:RUNNER_TEMP 'usage-indicator-for-codex-win-x64'
+          $archive = Join-Path $env:RUNNER_TEMP 'usage-indicator-for-codex-win-x64.zip'
+          $probe = '.\tests\UsageIndicatorForCodex.LauncherProbe\bin\Release\net8.0\UsageIndicatorForCodex.LauncherProbe.exe'
+          .\scripts\package-release.ps1 -PublishDirectory $publishDirectory -ArchivePath $archive
+          .\tests\console-contract.ps1 -PublishDirectory $publishDirectory -LauncherProbe $probe -ArchivePath $archive

@@ -194,7 +194,7 @@ static void KeepsApprovedUsageWording()
 
 static void UsesCanonicalAssemblyIdentities()
 {
-    AssertEqual("UsageIndicatorForCodex", typeof(UsageIndicatorForCodex.App).Assembly.GetName().Name!);
+    AssertEqual("UsageIndicatorForCodex.Gui", typeof(UsageIndicatorForCodex.App).Assembly.GetName().Name!);
     AssertEqual("UsageIndicatorForCodex.Tests", System.Reflection.Assembly.GetExecutingAssembly().GetName().Name!);
 }
 
@@ -1119,7 +1119,7 @@ static void RemovesRecognizedLegacyStartupAfterRegisteringCanonical()
         "--background",
         "Shows the Codex usage indicator companion.");
 
-    StartupTaskManager.Install(@"C:\Apps\UsageIndicatorForCodex.exe", scheduler);
+    StartupTaskManager.Install(@"C:\Apps\UsageIndicatorForCodex.Gui.exe", scheduler);
 
     AssertEqual(3, scheduler.Operations.Count);
     AssertEqual($"Register:{StartupTaskManager.TaskName}", scheduler.Operations[0]);
@@ -1127,7 +1127,7 @@ static void RemovesRecognizedLegacyStartupAfterRegisteringCanonical()
     AssertEqual($"Delete:{StartupTaskManager.LegacyTaskName}", scheduler.Operations[2]);
     AssertEqual(true, scheduler.Tasks.ContainsKey(StartupTaskManager.TaskName));
     AssertEqual(false, scheduler.Tasks.ContainsKey(StartupTaskManager.LegacyTaskName));
-    AssertEqual(@"C:\Apps\UsageIndicatorForCodex.exe", scheduler.RegisteredExecutablePath!);
+    AssertEqual(@"C:\Apps\UsageIndicatorForCodex.Gui.exe", scheduler.RegisteredExecutablePath!);
     AssertEqual("--background", scheduler.RegisteredConfiguration!.Arguments);
 }
 
@@ -1139,7 +1139,7 @@ static void PreservesUnrelatedLegacyNamedStartupTask()
         "--background",
         "Unrelated maintenance task.");
 
-    StartupTaskManager.Install(@"C:\Apps\UsageIndicatorForCodex.exe", scheduler);
+    StartupTaskManager.Install(@"C:\Apps\UsageIndicatorForCodex.Gui.exe", scheduler);
 
     AssertEqual(2, scheduler.Operations.Count);
     AssertEqual($"Register:{StartupTaskManager.TaskName}", scheduler.Operations[0]);
@@ -1160,7 +1160,7 @@ static void LeavesLegacyStartupWhenRegistrationFails()
         "Shows the Codex usage indicator companion.");
 
     AssertThrows<COMException>(() =>
-        StartupTaskManager.Install(@"C:\Apps\UsageIndicatorForCodex.exe", scheduler));
+        StartupTaskManager.Install(@"C:\Apps\UsageIndicatorForCodex.Gui.exe", scheduler));
     AssertEqual(1, scheduler.Operations.Count);
     AssertEqual($"Register:{StartupTaskManager.TaskName}", scheduler.Operations[0]);
     AssertEqual(true, scheduler.Tasks.ContainsKey(StartupTaskManager.LegacyTaskName));
@@ -1179,10 +1179,10 @@ static void KeepsNormalLaunchFailOpenForMigrationFailure()
     AssertEqual(false, migrationCalled);
 
     AssertEqual(false, App.TryMigrateLegacyStartup(
-        () => @"C:\Apps\UsageIndicatorForCodex.exe",
+        () => @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
         _ => throw new COMException("Scheduler unavailable.")));
     AssertEqual(true, App.TryMigrateLegacyStartup(
-        () => @"C:\Apps\UsageIndicatorForCodex.exe",
+        () => @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
         _ => true));
 }
 
@@ -1190,7 +1190,7 @@ static void MigratesOnlyRecognizedLegacyStartupTasks()
 {
     var noLegacy = new RecordingStartupTaskScheduler();
     AssertEqual(false, StartupTaskManager.MigrateLegacyTask(
-        @"C:\Apps\UsageIndicatorForCodex.exe",
+        @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
         noLegacy));
     AssertEqual(1, noLegacy.Operations.Count);
     AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", noLegacy.Operations[0]);
@@ -1201,7 +1201,7 @@ static void MigratesOnlyRecognizedLegacyStartupTasks()
         "--background",
         "Unrelated task.");
     AssertEqual(false, StartupTaskManager.MigrateLegacyTask(
-        @"C:\Apps\UsageIndicatorForCodex.exe",
+        @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
         unrelated));
     AssertEqual(1, unrelated.Operations.Count);
     AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", unrelated.Operations[0]);
@@ -1213,7 +1213,7 @@ static void MigratesOnlyRecognizedLegacyStartupTasks()
         "--background",
         "Shows the Codex usage indicator companion.");
     AssertEqual(true, StartupTaskManager.MigrateLegacyTask(
-        @"C:\Apps\UsageIndicatorForCodex.exe",
+        @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
         migration));
     AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", migration.Operations[0]);
     AssertEqual($"Register:{StartupTaskManager.TaskName}", migration.Operations[1]);
@@ -1224,7 +1224,7 @@ static void UninstallsCanonicalAndRecognizedLegacyStartupTasks()
 {
     var uninstall = new RecordingStartupTaskScheduler();
     uninstall.Tasks[StartupTaskManager.TaskName] = new StartupTaskInfo(
-        @"C:\Apps\UsageIndicatorForCodex.exe",
+        @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
         "--background",
         "Shows the Usage Indicator for Codex companion.");
     uninstall.Tasks[StartupTaskManager.LegacyTaskName] = new StartupTaskInfo(
@@ -1244,7 +1244,7 @@ static void PreservesUnrecognizedLegacyStartupTaskDuringUninstall()
 {
     var uninstall = new RecordingStartupTaskScheduler();
     uninstall.Tasks[StartupTaskManager.TaskName] = new StartupTaskInfo(
-        @"C:\Apps\UsageIndicatorForCodex.exe",
+        @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
         "--background",
         "Shows the Usage Indicator for Codex companion.");
     uninstall.Tasks[StartupTaskManager.LegacyTaskName] = new StartupTaskInfo(
@@ -1286,7 +1286,7 @@ static void TreatsMissingStartupTasksAsNonFatal()
     AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", missing.Operations[1]);
 
     AssertEqual(false, StartupTaskManager.MigrateLegacyTask(
-        @"C:\Apps\UsageIndicatorForCodex.exe",
+        @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
         missing));
 }
 
@@ -1294,7 +1294,7 @@ static void DoesNotMaskStartupTaskRemovalFailures()
 {
     var firstDeleteFailure = new RecordingStartupTaskScheduler();
     firstDeleteFailure.Tasks[StartupTaskManager.TaskName] = new StartupTaskInfo(
-        @"C:\Apps\UsageIndicatorForCodex.exe",
+        @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
         "--background",
         "Shows the Usage Indicator for Codex companion.");
     firstDeleteFailure.Tasks[StartupTaskManager.LegacyTaskName] = new StartupTaskInfo(

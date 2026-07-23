@@ -267,7 +267,7 @@ Review only parser strictness, pre-initialization behavior, current-user pipe se
 
 - Produces: canonical and legacy settings path helpers.
 - Produces: atomic settings save and create-if-absent migration.
-- Produces: canonical `TaskName`, legacy `LegacyTaskName`, create-before-delete install/migration, and dual-name uninstall.
+- Produces: canonical `TaskName`, legacy `LegacyTaskName`, create-before-recognized-delete install/migration, and canonical-always/recognized-legacy-only uninstall.
 
 - [ ] **Step 1: Add failing settings migration tests**
 
@@ -295,14 +295,14 @@ Normal `Save` writes a unique same-directory temporary file, flushes, and atomic
 
 - [ ] **Step 3: Add failing startup migration-plan tests**
 
-Extract a scheduler adapter or pure orchestration seam and prove the call order:
+Extract a scheduler adapter or pure orchestration seam and prove that a recognized owned legacy task produces this call order:
 
 ```text
 Register UsageIndicatorForCodex
 Delete CodexUsageIndicator
 ```
 
-When registration throws, assert that legacy delete was never attempted. Assert uninstall attempts both names and ignores only missing-task HRESULT `0x80070002`.
+Recognition requires exactly one executable action whose normalized, fully qualified path ends with `CodexUsageIndicator.exe`, with the exact argument `--background`. Add negative cases proving that unrecognized, ambiguous, multi-action, non-executable, malformed, and unreadable same-name tasks are preserved. When registration throws, assert that legacy delete was never attempted. Assert uninstall always attempts canonical deletion, deletes legacy only when it is recognized as owned, and ignores only missing-task HRESULT `0x80070002`.
 
 - [ ] **Step 4: Implement canonical startup and migration**
 
@@ -313,9 +313,9 @@ internal const string TaskName = "UsageIndicatorForCodex";
 internal const string LegacyTaskName = "CodexUsageIndicator";
 ```
 
-`Install` registers the canonical task with `--background`, then deletes the legacy task. Add a normal-launch compatibility migration that first detects the legacy task, registers canonical with the current executable, and then deletes legacy. Failure to migrate must leave legacy intact and must not prevent the normal application from starting.
+`Install` registers the canonical task with `--background` first, then deletes the legacy task only when the ownership-recognition rule above succeeds. Add a normal-launch compatibility migration that first recognizes the legacy task as owned, registers canonical with the current executable, and only then deletes legacy. Unrecognized, ambiguous, multi-action, non-executable, malformed, and unreadable same-name tasks must be preserved. Canonical registration failure must leave legacy intact and must not prevent the normal application from starting.
 
-`Uninstall` attempts canonical and legacy deletion independently. Preserve the current interactive-user configuration, three retries, one-minute interval, and no execution limit.
+`Uninstall` always attempts canonical deletion and attempts legacy deletion only after recognizing the legacy task as owned. Preserve the current interactive-user configuration, three retries, one-minute interval, and no execution limit.
 
 - [ ] **Step 5: Verify isolated settings migration**
 
@@ -325,11 +325,11 @@ Expected: every precedence/race case passes and no temp files remain.
 
 - [ ] **Step 6: Verify disposable scheduled-task behavior**
 
-Use a uniquely suffixed disposable task name through the scheduler test seam. Verify registration XML/action path/`--background`, restart settings, create-before-delete ordering, and removal. Restore any pre-test task state and report it.
+Use a uniquely suffixed disposable task name through the scheduler test seam. Verify registration XML/action path/`--background`, restart settings, create-before-recognized-delete ordering, preserve-by-default ownership handling, and canonical-always/recognized-legacy-only removal. Restore any pre-test task state and report it.
 
 - [ ] **Step 7: Fresh read-only Task 3 review**
 
-Review only settings precedence/atomicity, task ordering/failure handling, actual task configuration, and normal-launch behavior. Correct blockers and rerun Task 3 verification.
+Review only settings precedence/atomicity, task ordering/failure handling, ownership recognition and preservation, uninstall gating, actual task configuration, and normal-launch behavior. Correct blockers and rerun Task 3 verification.
 
 ---
 

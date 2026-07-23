@@ -1,0 +1,3 @@
+LIBRARY SHELL32.DLL
+EXPORTS
+    CommandLineToArgvW
