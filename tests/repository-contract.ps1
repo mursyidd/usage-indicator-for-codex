@@ -170,8 +170,12 @@ foreach ($documentPath in @('README.md', 'SECURITY.md')) {
     }
 }
 
+$ciWorkflow = Get-Content -LiteralPath (
+    Join-Path $repositoryRoot '.github\workflows\ci.yml') -Raw
 $releaseWorkflow = Get-Content -LiteralPath (
     Join-Path $repositoryRoot '.github\workflows\release.yml') -Raw
+$innoVerifier = Get-Content -LiteralPath (
+    Join-Path $repositoryRoot 'scripts\verify-inno-setup.ps1') -Raw
 foreach ($fragment in @(
     '$env:GITHUB_REF_NAME -cne $metadata.Tag',
     '${{ github.server_url }}/${{ github.repository }}',
@@ -180,6 +184,93 @@ foreach ($fragment in @(
 )) {
     if ($releaseWorkflow.IndexOf($fragment, [StringComparison]::Ordinal) -lt 0) {
         throw "Release workflow is missing version/asset invariant: $fragment"
+    }
+}
+
+$expectedInnoSetupVersion = '6.7.1'
+$expectedInstallCommand =
+    "choco install innosetup --version=$expectedInnoSetupVersion --yes --no-progress"
+$workflowContracts = [ordered]@{
+    CI = $ciWorkflow
+    Release = $releaseWorkflow
+}
+$workflowPins = [Collections.Generic.List[string]]::new()
+foreach ($workflowEntry in $workflowContracts.GetEnumerator()) {
+    $installCommands = @(
+        [regex]::Matches(
+            $workflowEntry.Value,
+            '(?m)^\s*(?:run:\s*)?(choco install innosetup[^\r\n]*)$') |
+            ForEach-Object { $_.Groups[1].Value.Trim() }
+    )
+    if ($installCommands.Count -ne 1 -or
+        $installCommands[0] -cne $expectedInstallCommand) {
+        throw "$($workflowEntry.Key) must contain exactly this Inno Setup install command: $expectedInstallCommand"
+    }
+
+    $pinMatch = [regex]::Match(
+        $installCommands[0],
+        '--version=([0-9]+\.[0-9]+\.[0-9]+)')
+    if (-not $pinMatch.Success) {
+        throw "$($workflowEntry.Key) uses an unpinned Inno Setup installation command."
+    }
+    $workflowPins.Add($pinMatch.Groups[1].Value)
+
+    foreach ($fragment in @(
+        '- name: Verify Inno Setup compiler version',
+        "`$expectedInnoSetupVersion = '$expectedInnoSetupVersion'",
+        '$compilerPath = Join-Path ${env:ProgramFiles(x86)} ''Inno Setup 6\ISCC.exe''',
+        '$compiler = .\scripts\verify-inno-setup.ps1 `',
+        '-CompilerPath $compilerPath `',
+        '-ExpectedVersion $expectedInnoSetupVersion',
+        '"INNO_SETUP_COMPILER=$($compiler.FullName)"',
+        '-IsccPath $env:INNO_SETUP_COMPILER'
+    )) {
+        if ($workflowEntry.Value.IndexOf($fragment, [StringComparison]::Ordinal) -lt 0) {
+            throw "$($workflowEntry.Key) is missing Inno Setup compiler verification: $fragment"
+        }
+    }
+
+    $exportPattern =
+        '(?s)"INNO_SETUP_COMPILER=\$\(\$compiler\.FullName\)"\s*\|\s*' +
+        'Out-File -FilePath \$env:GITHUB_ENV -Encoding utf8 -Append'
+    if (-not [regex]::IsMatch($workflowEntry.Value, $exportPattern)) {
+        throw "$($workflowEntry.Key) must export the exact verified ISCC.exe path."
+    }
+
+    $installIndex = $workflowEntry.Value.IndexOf(
+        $expectedInstallCommand,
+        [StringComparison]::Ordinal)
+    $verifyIndex = $workflowEntry.Value.IndexOf(
+        '- name: Verify Inno Setup compiler version',
+        [StringComparison]::Ordinal)
+    $buildIndex = $workflowEntry.Value.IndexOf(
+        '- name: Build and validate installer',
+        [StringComparison]::Ordinal)
+    if ($installIndex -lt 0 -or
+        $verifyIndex -le $installIndex -or
+        $buildIndex -le $verifyIndex) {
+        throw "$($workflowEntry.Key) must install, verify, then use Inno Setup in that order."
+    }
+}
+if ($workflowPins.Count -ne 2 -or
+    $workflowPins[0] -cne $workflowPins[1] -or
+    $workflowPins[0] -cne $expectedInnoSetupVersion) {
+    throw "CI and release Inno Setup pins must both be $expectedInnoSetupVersion."
+}
+
+foreach ($fragment in @(
+    'ExpectedVersion -cnotmatch ''^([0-9]+)\.([0-9]+)\.([0-9]+)$''',
+    '#if Ver != EncodeVer($major,$minor,$revision)',
+    '#error Unexpected Inno Setup compiler version',
+    'Output=no',
+    '& $resolvedCompilerPath ''/Q'' $probePath',
+    '$compilerExitCode = $LASTEXITCODE',
+    'if ($compilerExitCode -ne 0)',
+    'throw "ISCC.exe is not version $ExpectedVersion.',
+    'Get-Item -LiteralPath $resolvedCompilerPath'
+)) {
+    if ($innoVerifier.IndexOf($fragment, [StringComparison]::Ordinal) -lt 0) {
+        throw "Inno Setup compiler verifier is missing required behavior: $fragment"
     }
 }
 

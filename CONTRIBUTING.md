@@ -77,6 +77,29 @@ dotnet publish .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj `
 Do not weaken package-content, launcher-layout, installer-ownership, version,
 tag, or four-asset checks.
 
+## Maintaining the Inno Setup pin
+
+CI and release builds install Chocolatey package `innosetup` at the exact
+version pinned in both workflow files. They run that exact `ISCC.exe` against
+a no-output preprocessor probe that requires Inno's authoritative `Ver` value
+to match the pin, then pass the successfully probed compiler path to the
+installer build. File/product version metadata is not used because official
+compiler binaries do not expose a reliable release version there.
+
+To update the pin:
+
+1. Confirm the intended version is published and verified in the Chocolatey
+   community package repository.
+2. Update the `choco install innosetup --version=...` command and
+   `$expectedInnoSetupVersion` in both `.github/workflows/ci.yml` and
+   `.github/workflows/release.yml`.
+3. Update `$expectedInnoSetupVersion` in `tests/repository-contract.ps1`.
+4. Run `.\tests\repository-contract.ps1`, compile the installer, and run
+   `.\tests\installer-contract.ps1` before relying on CI or creating a release.
+
+Never update only one workflow or remove the post-install compiler-version
+check.
+
 ## Product version and commands
 
 `Directory.Build.props` is the only product-version source. Do not copy the
