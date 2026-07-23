@@ -8,7 +8,8 @@ The usage data comes from the ChatGPT-authenticated account in a separately inst
 
 - Windows 11 x64. Windows 10 and Arm64 have not been verified by this project.
 - To build: a .NET SDK capable of targeting `net8.0-windows` (the .NET 8 SDK or a compatible later SDK).
-- To run the framework-dependent release: the x64 [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0).
+- To develop or run from source: the x64 [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0).
+- GitHub release ZIPs are self-contained `win-x64` packages and do not require a separate .NET runtime installation.
 - A separately installed, compatible Codex CLI authenticated with ChatGPT.
 - Codex Desktop for the followed window.
 
@@ -58,7 +59,7 @@ The default test run is local and does not use an authenticated account. Optiona
 - A percentage is shown only after a verified ChatGPT-account response with an active reset window.
 - The overlay hides when no eligible Codex Desktop window is visible or the title bar is too narrow.
 
-The companion refreshes on attachment, periodically while Codex is active, and after eligible focus changes. It keeps the last attached visible Codex window when another application receives focus.
+The companion refreshes on attachment, periodically while Codex is active, and after Codex regains focus when the cached result is older than one minute. Movement and resizing reposition the indicator without launching a new CLI probe. It keeps the last attached visible Codex window when another application receives focus.
 
 ## Settings and controls
 
@@ -88,26 +89,17 @@ Offsets are logical pixels and must be finite numbers from `-500` through `500`.
 
 ## Publish and release artifact
 
-The intended downloadable artifact is a framework-dependent Windows x64 ZIP:
+Development remains framework-dependent. Official GitHub release artifacts are self-contained Windows x64 ZIPs:
 
 ```powershell
 dotnet publish .\src\CodexUsageIndicator\CodexUsageIndicator.csproj `
-  --configuration Release `
-  --runtime win-x64 `
-  --self-contained false `
+  -p:PublishProfile=win-x64-self-contained `
   --output .\artifacts\publish\win-x64
 ```
 
-Create the ZIP from these four files only:
+Archive the complete publish output so the bundled .NET runtime remains intact. Do not include PDBs, settings, logs, caches, test output, or source archives. `artifacts/`, `publish/`, binaries, symbols, archives, and local settings are ignored and must not be committed.
 
-```text
-CodexUsageIndicator.exe
-CodexUsageIndicator.dll
-CodexUsageIndicator.deps.json
-CodexUsageIndicator.runtimeconfig.json
-```
-
-Do not distribute PDBs, settings, logs, caches, test output, source archives, or local runtime copies. `artifacts/`, `publish/`, binaries, symbols, archives, and local settings are ignored and must not be committed.
+Pushing a `v*` tag runs the Windows release workflow: it restores, tests, creates the self-contained `win-x64` output, verifies its runtime files and absence of PDBs, then publishes `CodexUsageIndicator-win-x64.zip` to the matching GitHub Release. Add the MIT license before creating the first release tag.
 
 ## Startup, disable, and uninstall
 

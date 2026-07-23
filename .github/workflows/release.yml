@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore .\tests\CodexUsageIndicator.Tests\CodexUsageIndicator.Tests.csproj
+
+      - name: Test
+        run: dotnet run --project .\tests\CodexUsageIndicator.Tests\CodexUsageIndicator.Tests.csproj --configuration Release --no-restore
+
+      - name: Publish self-contained release
+        run: >
+          dotnet publish .\src\CodexUsageIndicator\CodexUsageIndicator.csproj
+          --configuration Release
+          --no-restore
+          -p:PublishProfile=win-x64-self-contained
+          --output $env:RUNNER_TEMP\CodexUsageIndicator-win-x64
+
+      - name: Verify and package release
+        shell: pwsh
+        run: |
+          $publishDirectory = Join-Path $env:RUNNER_TEMP 'CodexUsageIndicator-win-x64'
+          foreach ($file in 'CodexUsageIndicator.exe', 'coreclr.dll', 'hostfxr.dll', 'hostpolicy.dll') {
+            if (-not (Test-Path (Join-Path $publishDirectory $file))) {
+              throw "Expected self-contained runtime file is missing: $file"
+            }
+          }
+          if (Get-ChildItem -Path $publishDirectory -Recurse -Filter '*.pdb') {
+            throw 'Release publish output contains PDB files.'
+          }
+          $archive = Join-Path $env:RUNNER_TEMP 'CodexUsageIndicator-win-x64.zip'
+          Compress-Archive -Path (Join-Path $publishDirectory '*') -DestinationPath $archive
+          "RELEASE_ARCHIVE=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME $env:RELEASE_ARCHIVE --generate-notes
