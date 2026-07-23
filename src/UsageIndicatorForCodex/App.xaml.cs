@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.IO;
+using System.Net.Http;
 using System.Windows;
 using UsageIndicatorForCodex.Services;
 using UsageIndicatorForCodex.Views;
@@ -22,38 +24,68 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        if (options.Action == CommandLineAction.Version)
+        {
+            CommandLineOutput.Show($"usage-indicator {ProductInfo.Version}", isError: false);
+            Shutdown(0);
+            return;
+        }
+
         base.OnStartup(eventArgs);
-        if (options.Action == CommandLineAction.Install)
+        if (options.Action == CommandLineAction.EnableStartup)
         {
             try
             {
                 StartupTaskManager.Install(GetExecutablePath());
+                CommandLineOutput.Show("Startup enabled.", isError: false);
                 Shutdown(0);
             }
             catch (Exception exception)
             {
-                MessageBox.Show($"Automatic startup could not be installed. {exception.Message}", "Usage Indicator for Codex", MessageBoxButton.OK, MessageBoxImage.Error);
+                CommandLineOutput.Show(
+                    $"Startup could not be enabled. {exception.Message}",
+                    isError: true);
                 Shutdown(1);
             }
             return;
         }
 
-        if (options.Action == CommandLineAction.Uninstall)
+        if (options.Action == CommandLineAction.DisableStartup)
         {
             try
             {
                 StartupTaskManager.Uninstall();
+                CommandLineOutput.Show("Startup disabled.", isError: false);
                 Shutdown(0);
             }
             catch (Exception exception)
             {
-                MessageBox.Show(
-                    $"Automatic startup could not be removed. {exception.Message}",
-                    "Usage Indicator for Codex",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
+                CommandLineOutput.Show(
+                    $"Startup could not be disabled. {exception.Message}",
+                    isError: true);
                 Shutdown(1);
             }
+            return;
+        }
+
+        if (options.Action == CommandLineAction.Status)
+        {
+            using var statusInstance = SingleInstanceService.CreateForCurrentUser();
+            var isRunning = !statusInstance.IsPrimary;
+            CommandLineOutput.Show(isRunning ? "running" : "stopped", isError: false);
+            Shutdown(isRunning ? 0 : 1);
+            return;
+        }
+
+        if (options.Action == CommandLineAction.Stop)
+        {
+            _ = StopAndShutdownAsync();
+            return;
+        }
+
+        if (options.Action is CommandLineAction.CheckUpdate or CommandLineAction.Update)
+        {
+            _ = CheckForUpdateAndShutdownAsync(options.Action == CommandLineAction.Update);
             return;
         }
 
@@ -67,7 +99,6 @@ public partial class App : System.Windows.Application
         {
             CommandLineAction.Toggle => InstanceCommand.Toggle,
             CommandLineAction.RevalidateCli => InstanceCommand.RevalidateCli,
-            CommandLineAction.Exit => InstanceCommand.Exit,
             _ => (InstanceCommand?)null
         };
         var singleInstance = SingleInstanceService.CreateForCurrentUser();
@@ -204,6 +235,120 @@ public partial class App : System.Windows.Application
             MessageBox.Show("The configured Codex CLI could not be revalidated. Usage remains unavailable.", "Usage Indicator for Codex", MessageBoxButton.OK, MessageBoxImage.Warning);
             Shutdown(1);
         }
+    }
+
+    private async Task StopAndShutdownAsync()
+    {
+        try
+        {
+            if (!await StopRunningInstanceAsync())
+            {
+                throw new InvalidOperationException("The running instance did not stop.");
+            }
+
+            CommandLineOutput.Show("stopped", isError: false);
+            Shutdown(0);
+        }
+        catch (Exception exception)
+        {
+            CommandLineOutput.Show($"Stop failed. {exception.Message}", isError: true);
+            Shutdown(1);
+        }
+    }
+
+    private async Task CheckForUpdateAndShutdownAsync(bool prepareUpdate)
+    {
+        try
+        {
+            var repositoryUrl = ProductInfo.RepositoryUrl;
+            if (string.IsNullOrWhiteSpace(repositoryUrl))
+            {
+                throw new InvalidOperationException(
+                    "This build does not contain an explicitly configured GitHub repository URL.");
+            }
+
+            using var httpClient = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(30)
+            };
+            var updateService = new ReleaseUpdateService(
+                httpClient,
+                repositoryUrl,
+                ProductInfo.Version);
+            if (!prepareUpdate)
+            {
+                var check = await updateService.CheckAsync(CancellationToken.None);
+                CommandLineOutput.Show(check.Message, isError: false);
+                Shutdown(0);
+                return;
+            }
+
+            var updateRoot = Path.Combine(
+                Path.GetTempPath(),
+                "UsageIndicatorForCodex",
+                "updates");
+            var installerPath = await updateService.PrepareUpdateAsync(
+                updateRoot,
+                CancellationToken.None);
+            if (installerPath is null)
+            {
+                CommandLineOutput.Show($"Up to date: {ProductInfo.Version}.", isError: false);
+                Shutdown(0);
+                return;
+            }
+
+            if (!await StopRunningInstanceAsync())
+            {
+                throw new InvalidOperationException(
+                    "The running application could not be stopped before launching the installer.");
+            }
+
+            _ = Process.Start(new ProcessStartInfo
+            {
+                FileName = installerPath,
+                UseShellExecute = true
+            }) ?? throw new InvalidOperationException("The installer process could not be started.");
+            CommandLineOutput.Show(
+                $"Launching verified installer {Path.GetFileName(installerPath)}.",
+                isError: false);
+            Shutdown(0);
+        }
+        catch (Exception exception)
+        {
+            CommandLineOutput.Show($"Update failed. {exception.Message}", isError: true);
+            Shutdown(1);
+        }
+    }
+
+    private static async Task<bool> StopRunningInstanceAsync()
+    {
+        var instance = SingleInstanceService.CreateForCurrentUser();
+        if (instance.IsPrimary)
+        {
+            instance.Dispose();
+            return true;
+        }
+
+        var pipeNames = instance.GetPipeNamesForCommand(InstanceCommand.Exit);
+        instance.Dispose();
+        if (await SingleInstanceService.TrySendAsync(pipeNames, InstanceCommand.Exit) != true)
+        {
+            return false;
+        }
+
+        var timeout = Stopwatch.StartNew();
+        while (timeout.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            using var probe = SingleInstanceService.CreateForCurrentUser();
+            if (probe.IsPrimary)
+            {
+                return true;
+            }
+
+            await Task.Delay(50);
+        }
+
+        return false;
     }
 
     private static string GetExecutablePath() =>

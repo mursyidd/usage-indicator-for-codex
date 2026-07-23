@@ -4,7 +4,12 @@ using UsageIndicatorForCodex.Services;
 using UsageIndicatorForCodex.Views;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 
@@ -86,6 +91,8 @@ var checks = new (string Name, Action Run)[]
     ("uses approved color thresholds", UsesApprovedTones),
     ("keeps the approved neutral Usage wording", KeepsApprovedUsageWording),
     ("uses the canonical assembly identities", UsesCanonicalAssemblyIdentities),
+    ("uses the authoritative product version", UsesAuthoritativeProductVersion),
+    ("sends the authoritative app-server client version", SendsAuthoritativeAppServerVersion),
     ("formats MYT timestamps without a zone label", FormatsMalaysiaTime),
     ("selects every responsive layout", SelectsResponsiveLayouts),
     ("sizes the full overlay to its rendered content", SizesFullOverlayToContent),
@@ -93,6 +100,10 @@ var checks = new (string Name, Action Run)[]
     ("coalesces overlapping refresh requests", CoalescesOverlappingRefreshRequests),
     ("cancels and replaces refresh requests", CancelsAndReplacesRefreshRequests),
     ("parses application commands strictly", ParsesApplicationCommandsStrictly),
+    ("selects stable updates and exact release assets", SelectsStableUpdatesAndExactAssets),
+    ("checks for updates without downloading assets", ChecksForUpdatesWithoutDownloadingAssets),
+    ("downloads only checksum-verified installers", DownloadsOnlyChecksumVerifiedInstallers),
+    ("rejects invalid update checksums and repository URLs", RejectsInvalidUpdatesAndRepositoryUrls),
     ("routes commands to a single primary instance", RoutesCommandsToPrimaryInstance),
     ("coordinates canonical and legacy instance identities", CoordinatesCanonicalAndLegacyInstances),
     ("serves canonical and legacy command pipes", ServesCanonicalAndLegacyCommandPipes),
@@ -196,6 +207,41 @@ static void UsesCanonicalAssemblyIdentities()
 {
     AssertEqual("UsageIndicatorForCodex.Gui", typeof(UsageIndicatorForCodex.App).Assembly.GetName().Name!);
     AssertEqual("UsageIndicatorForCodex.Tests", System.Reflection.Assembly.GetExecutingAssembly().GetName().Name!);
+}
+
+static void UsesAuthoritativeProductVersion()
+{
+    AssertEqual("0.1.0", ProductInfo.Version);
+    AssertEqual(
+        ProductInfo.Version,
+        typeof(UsageIndicatorForCodex.App).Assembly
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()!
+            .InformationalVersion);
+}
+
+static void SendsAuthoritativeAppServerVersion()
+{
+    WithTemporaryDirectory("Codex Client Version", directory =>
+    {
+        var shimPath = CreateFakeServerShim(directory);
+        var initializePath = Path.Combine(directory, "initialize.json");
+        WithTemporaryEnvironment("CODEX_TEST_INITIALIZE_REQUEST", initializePath, () =>
+        {
+            _ = new CodexCliAppServerReader(shimPath, null, TimeSpan.FromSeconds(5))
+                .ReadAsync(CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        });
+
+        using var request = JsonDocument.Parse(File.ReadAllText(initializePath));
+        AssertEqual(
+            ProductInfo.Version,
+            request.RootElement
+                .GetProperty("params")
+                .GetProperty("clientInfo")
+                .GetProperty("version")
+                .GetString()!);
+    });
 }
 
 static void FormatsMalaysiaTime()
@@ -349,12 +395,21 @@ static void CancelsAndReplacesRefreshRequests()
 static void ParsesApplicationCommandsStrictly()
 {
     AssertEqual(CommandLineAction.Run, CommandLineOptions.Parse([]).Action);
+    AssertEqual(CommandLineAction.Run, CommandLineOptions.Parse(["start"]).Action);
     AssertEqual(CommandLineAction.Run, CommandLineOptions.Parse(["--background"]).Action);
-    AssertEqual(CommandLineAction.Install, CommandLineOptions.Parse(["--install"]).Action);
-    AssertEqual(CommandLineAction.Uninstall, CommandLineOptions.Parse(["--uninstall"]).Action);
+    AssertEqual(CommandLineAction.Stop, CommandLineOptions.Parse(["stop"]).Action);
+    AssertEqual(CommandLineAction.Stop, CommandLineOptions.Parse(["--exit"]).Action);
+    AssertEqual(CommandLineAction.Status, CommandLineOptions.Parse(["status"]).Action);
+    AssertEqual(CommandLineAction.Version, CommandLineOptions.Parse(["version"]).Action);
+    AssertEqual(CommandLineAction.CheckUpdate, CommandLineOptions.Parse(["check-update"]).Action);
+    AssertEqual(CommandLineAction.Update, CommandLineOptions.Parse(["update"]).Action);
+    AssertEqual(CommandLineAction.EnableStartup, CommandLineOptions.Parse(["enable-startup"]).Action);
+    AssertEqual(CommandLineAction.EnableStartup, CommandLineOptions.Parse(["--install"]).Action);
+    AssertEqual(CommandLineAction.DisableStartup, CommandLineOptions.Parse(["disable-startup"]).Action);
+    AssertEqual(CommandLineAction.DisableStartup, CommandLineOptions.Parse(["--uninstall"]).Action);
     AssertEqual(CommandLineAction.Toggle, CommandLineOptions.Parse(["--toggle"]).Action);
     AssertEqual(CommandLineAction.RevalidateCli, CommandLineOptions.Parse(["--revalidate-cli"]).Action);
-    AssertEqual(CommandLineAction.Exit, CommandLineOptions.Parse(["--exit"]).Action);
+    AssertEqual(CommandLineAction.Help, CommandLineOptions.Parse(["help"]).Action);
     AssertEqual(CommandLineAction.Help, CommandLineOptions.Parse(["--help"]).Action);
     AssertEqual(CommandLineAction.Help, CommandLineOptions.Parse(["-h"]).Action);
     AssertEqual(CommandLineAction.Invalid, CommandLineOptions.Parse(["--unknown"]).Action);
@@ -365,6 +420,148 @@ static void ParsesApplicationCommandsStrictly()
     AssertEqual(2, CommandLineOptions.Parse(["--unknown"]).ExitCode);
     AssertEqual(true, CommandLineOptions.Parse(["--unknown"]).Message.Contains(CommandLineOptions.Usage, StringComparison.Ordinal));
 }
+
+static void SelectsStableUpdatesAndExactAssets()
+{
+    var release = ReleaseUpdateService.ParseLatestStableRelease(CreateReleaseJson("0.2.0"));
+    AssertEqual(new Version(0, 2, 0), release.Version);
+    AssertEqual(
+        "UsageIndicatorForCodex-Setup-v0.2.0.exe",
+        ReleaseUpdateService.SelectExactAsset(
+            release,
+            "UsageIndicatorForCodex-Setup-v0.2.0.exe").Name);
+    AssertThrows<InvalidDataException>(() =>
+        ReleaseUpdateService.SelectExactAsset(
+            release,
+            "usageindicatorforcodex-setup-v0.2.0.exe"));
+
+    var prerelease = CreateReleaseJson("0.2.0").Replace(
+        "\"prerelease\": false",
+        "\"prerelease\": true",
+        StringComparison.Ordinal);
+    AssertThrows<InvalidDataException>(() =>
+        ReleaseUpdateService.ParseLatestStableRelease(prerelease));
+    AssertThrows<InvalidDataException>(() =>
+        ReleaseUpdateService.ParseLatestStableRelease(CreateReleaseJson("0.2.0-beta")));
+}
+
+static void ChecksForUpdatesWithoutDownloadingAssets()
+{
+    var handler = new RecordingHttpMessageHandler(request =>
+    {
+        AssertEqual(
+            "https://api.github.com/repos/example/project/releases/latest",
+            request.RequestUri!.AbsoluteUri);
+        return JsonResponse(CreateReleaseJson("0.2.0"));
+    });
+    using var client = new HttpClient(handler);
+    var result = new ReleaseUpdateService(
+            client,
+            "https://github.com/example/project",
+            ProductInfo.Version)
+        .CheckAsync(CancellationToken.None)
+        .GetAwaiter()
+        .GetResult();
+
+    AssertEqual(true, result.IsAvailable);
+    AssertEqual(1, handler.Requests.Count);
+    AssertEqual("Update available: 0.2.0 (current 0.1.0).", result.Message);
+}
+
+static void DownloadsOnlyChecksumVerifiedInstallers()
+{
+    var installerName = "UsageIndicatorForCodex-Setup-v0.2.0.exe";
+    var installerBytes = new byte[] { 1, 3, 3, 7 };
+    var checksum = Convert.ToHexString(SHA256.HashData(installerBytes)).ToLowerInvariant();
+    var handler = new RecordingHttpMessageHandler(request =>
+    {
+        var uri = request.RequestUri!.AbsoluteUri;
+        if (uri.EndsWith("/releases/latest", StringComparison.Ordinal))
+        {
+            return JsonResponse(CreateReleaseJson("0.2.0"));
+        }
+
+        if (uri.EndsWith($"/{installerName}", StringComparison.Ordinal))
+        {
+            return ByteResponse(installerBytes);
+        }
+
+        if (uri.EndsWith($"/{installerName}.sha256", StringComparison.Ordinal))
+        {
+            return ByteResponse(Encoding.UTF8.GetBytes($"{checksum}  {installerName}\n"));
+        }
+
+        throw new InvalidOperationException($"Unexpected request: {uri}");
+    });
+    using var client = new HttpClient(handler);
+    WithTemporaryDirectory("Usage Indicator Update", directory =>
+    {
+        var installerPath = new ReleaseUpdateService(
+                client,
+                "https://github.com/example/project",
+                ProductInfo.Version)
+            .PrepareUpdateAsync(directory, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        AssertEqual(installerName, Path.GetFileName(installerPath!));
+        AssertEqual(true, installerBytes.SequenceEqual(File.ReadAllBytes(installerPath!)));
+    });
+}
+
+static void RejectsInvalidUpdatesAndRepositoryUrls()
+{
+    AssertEqual(
+        "https://api.github.com/repos/example/project/releases/latest",
+        ReleaseUpdateService.CreateLatestReleaseApiUri(
+            "https://github.com/example/project.git").AbsoluteUri);
+    AssertThrows<InvalidOperationException>(() =>
+        ReleaseUpdateService.CreateLatestReleaseApiUri("https://example.invalid/owner/project"));
+    AssertThrows<InvalidOperationException>(() =>
+        ReleaseUpdateService.CreateLatestReleaseApiUri("https://github.com/owner/project/extra"));
+
+    var bytes = Encoding.UTF8.GetBytes("verified content");
+    var hash = SHA256.HashData(bytes);
+    AssertEqual(true, ReleaseUpdateService.ChecksumMatches(bytes, hash));
+    hash[0] ^= 0xff;
+    AssertEqual(false, ReleaseUpdateService.ChecksumMatches(bytes, hash));
+    AssertThrows<InvalidDataException>(() =>
+        ReleaseUpdateService.ParseChecksum(
+            $"{new string('0', 64)}  Wrong.exe",
+            "UsageIndicatorForCodex-Setup-v0.2.0.exe"));
+    AssertThrows<InvalidDataException>(() =>
+        ReleaseUpdateService.ParseChecksum(
+            $"{new string('0', 64)}  UsageIndicatorForCodex-Setup-v0.2.0.exe\n"
+            + $"{new string('0', 64)}  extra.exe",
+            "UsageIndicatorForCodex-Setup-v0.2.0.exe"));
+}
+
+static string CreateReleaseJson(string version) => $$"""
+    {
+      "tag_name": "v{{version}}",
+      "draft": false,
+      "prerelease": false,
+      "assets": [
+        {
+          "name": "UsageIndicatorForCodex-Setup-v{{version}}.exe",
+          "browser_download_url": "https://github.com/example/project/releases/download/v{{version}}/UsageIndicatorForCodex-Setup-v{{version}}.exe"
+        },
+        {
+          "name": "UsageIndicatorForCodex-Setup-v{{version}}.exe.sha256",
+          "browser_download_url": "https://github.com/example/project/releases/download/v{{version}}/UsageIndicatorForCodex-Setup-v{{version}}.exe.sha256"
+        }
+      ]
+    }
+    """;
+
+static HttpResponseMessage JsonResponse(string json) => new(HttpStatusCode.OK)
+{
+    Content = new StringContent(json, Encoding.UTF8, "application/json")
+};
+
+static HttpResponseMessage ByteResponse(byte[] bytes) => new(HttpStatusCode.OK)
+{
+    Content = new ByteArrayContent(bytes)
+};
 
 static void RoutesCommandsToPrimaryInstance()
 {
@@ -922,6 +1119,13 @@ static async Task RunFakeAppServerAsync(bool rpcError, bool hangAfterInitialize,
         var root = request.RootElement;
         var id = root.GetProperty("id").GetInt32();
         var method = root.GetProperty("method").GetString();
+        var initializeRequestPath = Environment.GetEnvironmentVariable("CODEX_TEST_INITIALIZE_REQUEST");
+        if (string.Equals(method, "initialize", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(initializeRequestPath))
+        {
+            await File.WriteAllTextAsync(initializeRequestPath, line);
+        }
+
         object response = method switch
         {
             "initialize" => new { jsonrpc = "2.0", id, result = new { } },
@@ -1400,5 +1604,19 @@ internal sealed class RecordingStartupTaskScheduler : IStartupTaskScheduler
         {
             throw new FileNotFoundException("Task not found.");
         }
+    }
+}
+
+internal sealed class RecordingHttpMessageHandler(
+    Func<HttpRequestMessage, HttpResponseMessage> responseFactory) : HttpMessageHandler
+{
+    internal List<HttpRequestMessage> Requests { get; } = [];
+
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        Requests.Add(request);
+        return Task.FromResult(responseFactory(request));
     }
 }

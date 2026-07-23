@@ -102,7 +102,7 @@ public sealed class CodexCliAppServerReader
 
             await SendAsync(writer, 1, "initialize", new
             {
-                clientInfo = new { name = "usage-indicator-for-codex", version = "1.0.0" },
+                clientInfo = new { name = "usage-indicator-for-codex", version = ProductInfo.Version },
                 capabilities = new { experimentalApi = false }
             }, timeout.Token);
             _ = await ReadResponseAsync(reader, 1, timeout.Token);

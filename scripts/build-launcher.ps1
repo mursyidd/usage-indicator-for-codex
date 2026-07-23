@@ -3,12 +3,27 @@ param(
     [Parameter(Mandatory)]
     [string]$OutputPath,
 
-    [string]$IntermediateDirectory
+    [string]$IntermediateDirectory,
+
+    [ValidateSet('Portable', 'Installed')]
+    [string]$Layout = 'Portable',
+
+    [string]$ProductVersion
 )
 
 $ErrorActionPreference = 'Stop'
 $sourceDirectory = Join-Path $PSScriptRoot '..\src\UsageIndicatorForCodex.Launcher'
 $sourceDirectory = (Resolve-Path -LiteralPath $sourceDirectory).Path
+. (Join-Path $PSScriptRoot 'product-metadata.ps1')
+. (Join-Path $PSScriptRoot 'version-resource.ps1')
+$metadata = Get-UsageIndicatorProductMetadata
+if ([string]::IsNullOrWhiteSpace($ProductVersion)) {
+    $ProductVersion = $metadata.Version
+}
+
+if ($ProductVersion -cne $metadata.Version) {
+    throw "Launcher version $ProductVersion does not match authoritative version $($metadata.Version)."
+}
 
 if ([string]::IsNullOrWhiteSpace($IntermediateDirectory)) {
     $IntermediateDirectory = Join-Path ([IO.Path]::GetTempPath()) "UsageIndicatorForCodex-Launcher-$([Guid]::NewGuid().ToString('N'))"
@@ -119,6 +134,14 @@ try {
     New-Item -ItemType Directory -Path $resolvedOutputParent -Force | Out-Null
     $resolvedOutputParent = (Resolve-Path -LiteralPath $resolvedOutputParent).Path
     $resolvedOutput = Join-Path $resolvedOutputParent (Split-Path -Leaf $OutputPath)
+    $fileName = Split-Path -Leaf $resolvedOutput
+    $guiRelativePath = if ($Layout -ceq 'Installed') {
+        '..\\app\\UsageIndicatorForCodex.Gui.exe'
+    } else {
+        'UsageIndicatorForCodex.Gui.exe'
+    }
+    $defaultArgument = if ($Layout -ceq 'Installed') { 'help' } else { '' }
+    $asyncArgument = if ($Layout -ceq 'Installed') { 'start' } else { '--background' }
 
     Invoke-NativeBuildTool $libraryManager @(
         '/nologo',
@@ -147,6 +170,9 @@ try {
         '/W4',
         '/WX',
         '/O1',
+        "/DLAUNCHER_GUI_RELATIVE_PATH=L\`"$guiRelativePath\`"",
+        "/DLAUNCHER_DEFAULT_ARGUMENT=L\`"$defaultArgument\`"",
+        "/DLAUNCHER_ASYNC_ARGUMENT=L\`"$asyncArgument\`"",
         (Join-Path $sourceDirectory 'launcher.c'),
         "/Fo$objectPath"
     )
@@ -167,6 +193,10 @@ try {
         $shellLibrary,
         $userLibrary
     )
+    Set-UsageIndicatorVersionResource `
+        -FilePath $resolvedOutput `
+        -ProductVersion $ProductVersion `
+        -OriginalFilename $fileName
 
     Get-Item -LiteralPath $resolvedOutput
 }

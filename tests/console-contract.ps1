@@ -6,13 +6,17 @@ param(
     [Parameter(Mandatory)]
     [string]$LauncherProbe,
 
-    [string]$ArchivePath
+    [string]$ArchivePath,
+
+    [string]$InstalledLauncher
 )
 
 $ErrorActionPreference = 'Stop'
 $publicExecutableName = 'UsageIndicatorForCodex.exe'
 $guiExecutableName = 'UsageIndicatorForCodex.Gui.exe'
 $windowsPowerShell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+. (Join-Path $PSScriptRoot '..\scripts\product-metadata.ps1')
+$metadata = Get-UsageIndicatorProductMetadata
 
 function Assert-True {
     param(
@@ -109,6 +113,9 @@ $probeExecutable = (Resolve-Path -LiteralPath $LauncherProbe).Path
 
 Assert-True (Test-Path -LiteralPath $publicExecutable -PathType Leaf) "Missing public launcher: $publicExecutable"
 Assert-True ((Get-PeSubsystem $publicExecutable) -eq 3) "$publicExecutableName is not IMAGE_SUBSYSTEM_WINDOWS_CUI."
+Assert-True (
+    (Get-Item -LiteralPath $publicExecutable).VersionInfo.ProductVersion -ceq $metadata.Version
+) "$publicExecutableName product version does not match $($metadata.Version)."
 Assert-True (Test-Path -LiteralPath $guiExecutable -PathType Leaf) "Missing GUI executable: $guiExecutable"
 Assert-True ((Get-PeSubsystem $guiExecutable) -eq 2) "$guiExecutableName is not IMAGE_SUBSYSTEM_WINDOWS_GUI."
 
@@ -152,6 +159,19 @@ $probe = Invoke-CapturedProcess `
     -TimeoutMilliseconds 30000
 Assert-True ($probe.ExitCode -eq 0) "Launcher probe failed: $($probe.Stdout)$($probe.Stderr)"
 
+if (-not [string]::IsNullOrWhiteSpace($InstalledLauncher)) {
+    $installedExecutable = (Resolve-Path -LiteralPath $InstalledLauncher).Path
+    Assert-True ((Get-PeSubsystem $installedExecutable) -eq 3) 'usage-indicator.exe is not IMAGE_SUBSYSTEM_WINDOWS_CUI.'
+    Assert-True (
+        (Get-Item -LiteralPath $installedExecutable).VersionInfo.ProductVersion -ceq $metadata.Version
+    ) "usage-indicator.exe product version does not match $($metadata.Version)."
+    $installedProbe = Invoke-CapturedProcess `
+        -FilePath $probeExecutable `
+        -Arguments "--verify-launcher Installed `"$installedExecutable`"" `
+        -TimeoutMilliseconds 30000
+    Assert-True ($installedProbe.ExitCode -eq 0) "Installed launcher probe failed: $($installedProbe.Stdout)$($installedProbe.Stderr)"
+}
+
 if (-not [string]::IsNullOrWhiteSpace($ArchivePath)) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $resolvedArchive = (Resolve-Path -LiteralPath $ArchivePath).Path
@@ -178,4 +198,4 @@ if (-not [string]::IsNullOrWhiteSpace($ArchivePath)) {
     }
 }
 
-Write-Output 'PASS publish console, forwarding, exit-code, asynchronous process, and archive contract'
+Write-Output 'PASS portable and installed console, forwarding, exit-code, asynchronous process, version, and archive contract'

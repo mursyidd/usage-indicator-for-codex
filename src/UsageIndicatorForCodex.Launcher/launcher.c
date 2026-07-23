@@ -20,6 +20,18 @@
 #define SW_HIDE 0
 #define HEAP_ZERO_MEMORY 0x00000008UL
 
+#ifndef LAUNCHER_GUI_RELATIVE_PATH
+#define LAUNCHER_GUI_RELATIVE_PATH L"UsageIndicatorForCodex.Gui.exe"
+#endif
+
+#ifndef LAUNCHER_DEFAULT_ARGUMENT
+#define LAUNCHER_DEFAULT_ARGUMENT L""
+#endif
+
+#ifndef LAUNCHER_ASYNC_ARGUMENT
+#define LAUNCHER_ASYNC_ARGUMENT L"--background"
+#endif
+
 typedef unsigned short WORD;
 typedef unsigned long DWORD;
 typedef int BOOL;
@@ -111,8 +123,9 @@ __declspec(dllimport) BOOL WINAPI WriteFile(
     DWORD *bytesWritten,
     void *overlapped);
 
-static const WCHAR GuiExecutableName[] = L"UsageIndicatorForCodex.Gui.exe";
-static const WCHAR BackgroundArgument[] = L"--background";
+static const WCHAR GuiRelativePath[] = LAUNCHER_GUI_RELATIVE_PATH;
+static const WCHAR DefaultArgument[] = LAUNCHER_DEFAULT_ARGUMENT;
+static const WCHAR AsyncArgument[] = LAUNCHER_ASYNC_ARGUMENT;
 static const WCHAR NullDeviceName[] = L"NUL";
 static const char LaunchFailureMessage[] =
     "UsageIndicatorForCodex.exe could not start UsageIndicatorForCodex.Gui.exe.\r\n";
@@ -185,7 +198,7 @@ static LPWSTR GetLauncherPath(HANDLE heap)
 static LPWSTR GetGuiPath(HANDLE heap, LPCWSTR launcherPath)
 {
     SIZE_T launcherLength = StringLength(launcherPath);
-    SIZE_T nameLength = StringLength(GuiExecutableName);
+    SIZE_T nameLength = StringLength(GuiRelativePath);
     SIZE_T directoryLength = launcherLength;
     SIZE_T index;
     LPWSTR guiPath;
@@ -213,7 +226,7 @@ static LPWSTR GetGuiPath(HANDLE heap, LPCWSTR launcherPath)
 
     for (index = 0; index < nameLength; ++index)
     {
-        guiPath[directoryLength + index] = GuiExecutableName[index];
+        guiPath[directoryLength + index] = GuiRelativePath[index];
     }
 
     guiPath[directoryLength + nameLength] = L'\0';
@@ -283,6 +296,11 @@ static LPWSTR BuildChildCommandLine(
         characterCapacity += StringLength(arguments[argumentIndex]) * 2 + 4;
     }
 
+    if (argumentCount == 1 && DefaultArgument[0] != L'\0')
+    {
+        characterCapacity += StringLength(DefaultArgument) * 2 + 4;
+    }
+
     commandLine = (LPWSTR)HeapAlloc(
         heap,
         HEAP_ZERO_MEMORY,
@@ -293,7 +311,12 @@ static LPWSTR BuildChildCommandLine(
     }
 
     offset = AppendQuotedArgument(commandLine, offset, guiPath);
-    for (argumentIndex = 1; argumentIndex < argumentCount; ++argumentIndex)
+    if (argumentCount == 1 && DefaultArgument[0] != L'\0')
+    {
+        commandLine[offset++] = L' ';
+        offset = AppendQuotedArgument(commandLine, offset, DefaultArgument);
+    }
+    else for (argumentIndex = 1; argumentIndex < argumentCount; ++argumentIndex)
     {
         commandLine[offset++] = L' ';
         offset = AppendQuotedArgument(commandLine, offset, arguments[argumentIndex]);
@@ -480,8 +503,8 @@ void WINAPI LauncherEntry(void)
         ExitProcess(1);
     }
 
-    asynchronous = argumentCount == 1
-        || (argumentCount == 2 && StringsEqual(arguments[1], BackgroundArgument));
+    asynchronous = (argumentCount == 1 && DefaultArgument[0] == L'\0')
+        || (argumentCount == 2 && StringsEqual(arguments[1], AsyncArgument));
     if (asynchronous)
     {
         HideNewConsoleForDesktopLaunch();

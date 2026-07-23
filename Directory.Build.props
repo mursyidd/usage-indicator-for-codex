@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <UsageIndicatorProductVersion>0.1.0</UsageIndicatorProductVersion>
+    <Version>$(UsageIndicatorProductVersion)</Version>
+    <VersionPrefix>$(UsageIndicatorProductVersion)</VersionPrefix>
+    <AssemblyVersion>$(UsageIndicatorProductVersion).0</AssemblyVersion>
+    <FileVersion>$(UsageIndicatorProductVersion).0</FileVersion>
+    <InformationalVersion>$(UsageIndicatorProductVersion)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+</Project>

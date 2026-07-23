@@ -8,11 +8,15 @@ namespace UsageIndicatorForCodex;
 internal enum CommandLineAction
 {
     Run,
-    Install,
-    Uninstall,
+    Stop,
+    Status,
+    Version,
+    CheckUpdate,
+    Update,
+    EnableStartup,
+    DisableStartup,
     Toggle,
     RevalidateCli,
-    Exit,
     Help,
     Invalid
 }
@@ -22,7 +26,18 @@ internal sealed record CommandLineOptions(CommandLineAction Action, int ExitCode
     internal const string Usage = """
         Usage Indicator for Codex
 
-        Usage:
+        Installed command:
+          usage-indicator start
+          usage-indicator stop
+          usage-indicator status
+          usage-indicator version
+          usage-indicator check-update
+          usage-indicator update
+          usage-indicator enable-startup
+          usage-indicator disable-startup
+          usage-indicator help
+
+        Portable compatibility:
           UsageIndicatorForCodex.exe
           UsageIndicatorForCodex.exe --background
           UsageIndicatorForCodex.exe --install
@@ -33,7 +48,8 @@ internal sealed record CommandLineOptions(CommandLineAction Action, int ExitCode
           UsageIndicatorForCodex.exe --help
           UsageIndicatorForCodex.exe -h
 
-        Normal launch starts the application immediately.
+        Running usage-indicator without arguments shows this help.
+        Running UsageIndicatorForCodex.exe without arguments starts the application.
         --install registers automatic startup only; it does not launch the application.
         """;
 
@@ -51,13 +67,17 @@ internal sealed record CommandLineOptions(CommandLineAction Action, int ExitCode
 
         return arguments[0] switch
         {
-            "--background" => new CommandLineOptions(CommandLineAction.Run, 0, string.Empty),
-            "--install" => new CommandLineOptions(CommandLineAction.Install, 0, string.Empty),
-            "--uninstall" => new CommandLineOptions(CommandLineAction.Uninstall, 0, string.Empty),
+            "start" or "--background" => new CommandLineOptions(CommandLineAction.Run, 0, string.Empty),
+            "stop" or "--exit" => new CommandLineOptions(CommandLineAction.Stop, 0, string.Empty),
+            "status" => new CommandLineOptions(CommandLineAction.Status, 0, string.Empty),
+            "version" => new CommandLineOptions(CommandLineAction.Version, 0, string.Empty),
+            "check-update" => new CommandLineOptions(CommandLineAction.CheckUpdate, 0, string.Empty),
+            "update" => new CommandLineOptions(CommandLineAction.Update, 0, string.Empty),
+            "enable-startup" or "--install" => new CommandLineOptions(CommandLineAction.EnableStartup, 0, string.Empty),
+            "disable-startup" or "--uninstall" => new CommandLineOptions(CommandLineAction.DisableStartup, 0, string.Empty),
             "--toggle" => new CommandLineOptions(CommandLineAction.Toggle, 0, string.Empty),
             "--revalidate-cli" => new CommandLineOptions(CommandLineAction.RevalidateCli, 0, string.Empty),
-            "--exit" => new CommandLineOptions(CommandLineAction.Exit, 0, string.Empty),
-            "--help" or "-h" => new CommandLineOptions(CommandLineAction.Help, 0, Usage),
+            "help" or "--help" or "-h" => new CommandLineOptions(CommandLineAction.Help, 0, Usage),
             _ => Invalid($"Unknown argument: {arguments[0]}")
         };
     }
