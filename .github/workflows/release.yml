@@ -20,36 +20,36 @@ jobs:
           dotnet-version: "8.0.x"
 
       - name: Restore
-        run: dotnet restore .\tests\CodexUsageIndicator.Tests\CodexUsageIndicator.Tests.csproj
+        run: dotnet restore .\UsageIndicatorForCodex.sln
+
+      - name: Build
+        run: dotnet build .\UsageIndicatorForCodex.sln --configuration Release --no-restore
 
       - name: Test
-        run: dotnet run --project .\tests\CodexUsageIndicator.Tests\CodexUsageIndicator.Tests.csproj --configuration Release --no-restore
+        run: dotnet run --project .\tests\UsageIndicatorForCodex.Tests\UsageIndicatorForCodex.Tests.csproj --configuration Release --no-build
 
-      - name: Publish self-contained release
+      - name: Restore win-x64 runtime
+        run: dotnet restore .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj --runtime win-x64
+
+      - name: Publish self-contained win-x64 release
         run: >
-          dotnet publish .\src\CodexUsageIndicator\CodexUsageIndicator.csproj
+          dotnet publish .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj
           --configuration Release
+          --runtime win-x64
+          --self-contained true
           --no-restore
           -p:PublishProfile=win-x64-self-contained
-          --output $env:RUNNER_TEMP\CodexUsageIndicator-win-x64
+          --output $env:RUNNER_TEMP\usage-indicator-for-codex-win-x64
 
       - name: Verify and package release
         shell: pwsh
         run: |
-          $publishDirectory = Join-Path $env:RUNNER_TEMP 'CodexUsageIndicator-win-x64'
-          foreach ($file in 'CodexUsageIndicator.exe', 'coreclr.dll', 'hostfxr.dll', 'hostpolicy.dll') {
-            if (-not (Test-Path (Join-Path $publishDirectory $file))) {
-              throw "Expected self-contained runtime file is missing: $file"
-            }
-          }
-          if (Get-ChildItem -Path $publishDirectory -Recurse -Filter '*.pdb') {
-            throw 'Release publish output contains PDB files.'
-          }
-          $archive = Join-Path $env:RUNNER_TEMP 'CodexUsageIndicator-win-x64.zip'
-          Compress-Archive -Path (Join-Path $publishDirectory '*') -DestinationPath $archive
+          $publishDirectory = Join-Path $env:RUNNER_TEMP 'usage-indicator-for-codex-win-x64'
+          $archive = Join-Path $env:RUNNER_TEMP 'usage-indicator-for-codex-win-x64.zip'
+          .\scripts\package-release.ps1 -PublishDirectory $publishDirectory -ArchivePath $archive
           "RELEASE_ARCHIVE=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create $env:GITHUB_REF_NAME $env:RELEASE_ARCHIVE --generate-notes
+        run: gh release create $env:GITHUB_REF_NAME $env:RELEASE_ARCHIVE --verify-tag --generate-notes
