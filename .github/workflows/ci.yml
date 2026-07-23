@@ -11,6 +11,9 @@ on:
 permissions:
   contents: read
 
+env:
+  REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+
 jobs:
   build:
     runs-on: windows-latest
@@ -31,30 +34,81 @@ jobs:
       - name: Test
         run: dotnet run --project .\tests\UsageIndicatorForCodex.Tests\UsageIndicatorForCodex.Tests.csproj --configuration Release --no-build
 
+      - name: Validate repository and version contract
+        shell: pwsh
+        run: .\tests\repository-contract.ps1
+
       - name: Restore win-x64 runtime
         run: dotnet restore .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj --runtime win-x64
 
       - name: Publish self-contained win-x64 release
-        run: >
-          dotnet publish .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj
-          --configuration Release
-          --runtime win-x64
-          --self-contained true
-          --no-restore
-          -p:PublishProfile=win-x64-self-contained
-          --output $env:RUNNER_TEMP\usage-indicator-for-codex-win-x64
-
-      - name: Build native launcher
         shell: pwsh
         run: |
-          $publishDirectory = Join-Path $env:RUNNER_TEMP 'usage-indicator-for-codex-win-x64'
-          .\scripts\build-launcher.ps1 -OutputPath (Join-Path $publishDirectory 'UsageIndicatorForCodex.exe')
+          dotnet publish .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained true `
+            --no-restore `
+            -p:PublishProfile=win-x64-self-contained `
+            -p:RepositoryUrl="$env:REPOSITORY_URL" `
+            --output (Join-Path $env:RUNNER_TEMP 'publish')
 
-      - name: Package and verify release contract
+      - name: Build portable and installed launchers
         shell: pwsh
         run: |
-          $publishDirectory = Join-Path $env:RUNNER_TEMP 'usage-indicator-for-codex-win-x64'
-          $archive = Join-Path $env:RUNNER_TEMP 'usage-indicator-for-codex-win-x64.zip'
+          $publishDirectory = Join-Path $env:RUNNER_TEMP 'publish'
+          .\scripts\build-launcher.ps1 `
+            -Layout Portable `
+            -OutputPath (Join-Path $publishDirectory 'UsageIndicatorForCodex.exe')
+          .\scripts\build-launcher.ps1 `
+            -Layout Installed `
+            -OutputPath (Join-Path $env:RUNNER_TEMP 'usage-indicator.exe')
+
+      - name: Package portable release and validate launchers
+        shell: pwsh
+        run: |
+          . .\scripts\product-metadata.ps1
+          $metadata = Get-UsageIndicatorProductMetadata
+          $publishDirectory = Join-Path $env:RUNNER_TEMP 'publish'
+          $assetDirectory = Join-Path $env:RUNNER_TEMP 'release-assets'
+          $archive = Join-Path $assetDirectory $metadata.PortableAssetName
           $probe = '.\tests\UsageIndicatorForCodex.LauncherProbe\bin\Release\net8.0\UsageIndicatorForCodex.LauncherProbe.exe'
           .\scripts\package-release.ps1 -PublishDirectory $publishDirectory -ArchivePath $archive
-          .\tests\console-contract.ps1 -PublishDirectory $publishDirectory -LauncherProbe $probe -ArchivePath $archive
+          .\tests\console-contract.ps1 `
+            -PublishDirectory $publishDirectory `
+            -LauncherProbe $probe `
+            -InstalledLauncher (Join-Path $env:RUNNER_TEMP 'usage-indicator.exe') `
+            -ArchivePath $archive
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build and validate installer
+        shell: pwsh
+        run: |
+          $assetDirectory = Join-Path $env:RUNNER_TEMP 'release-assets'
+          $installer = .\scripts\build-installer.ps1 `
+            -PublishDirectory (Join-Path $env:RUNNER_TEMP 'publish') `
+            -InstalledLauncher (Join-Path $env:RUNNER_TEMP 'usage-indicator.exe') `
+            -OutputDirectory $assetDirectory `
+            -RepositoryUrl $env:REPOSITORY_URL
+          .\tests\installer-contract.ps1 -InstallerPath $installer.FullName
+
+      - name: Generate checksums and validate exact release assets
+        shell: pwsh
+        run: |
+          . .\scripts\product-metadata.ps1
+          $metadata = Get-UsageIndicatorProductMetadata
+          $assetDirectory = Join-Path $env:RUNNER_TEMP 'release-assets'
+          .\scripts\release-assets.ps1 `
+            -InstallerPath (Join-Path $assetDirectory $metadata.InstallerAssetName) `
+            -PortableArchivePath (Join-Path $assetDirectory $metadata.PortableAssetName) `
+            -OutputDirectory $assetDirectory
+          .\tests\release-contract.ps1 -AssetDirectory $assetDirectory
+
+      - name: Upload validated release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: usage-indicator-for-codex-v0.1.0
+          path: ${{ runner.temp }}/release-assets/*
+          if-no-files-found: error

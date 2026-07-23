@@ -8,7 +8,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$expectedArchiveName = 'usage-indicator-for-codex-win-x64.zip'
+. (Join-Path $PSScriptRoot 'product-metadata.ps1')
+$metadata = Get-UsageIndicatorProductMetadata
+$expectedArchiveName = $metadata.PortableAssetName
 $requiredFiles = @(
     'UsageIndicatorForCodex.exe',
     'UsageIndicatorForCodex.Gui.exe',
