@@ -1,0 +1,91 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+[Aa]rtifacts/
+[Pp]ublish/
+publish-*/
+out/
+dist/
+packages/
+*.nupkg
+*.snupkg
+*.appx
+*.appxbundle
+*.msix
+*.msixbundle
+
+# Test results and coverage
+[Tt]est[Rr]esult*/
+[Tt]est[Rr]esults/
+coverage/
+coverage-*/
+*.coverage
+*.coveragexml
+*.coverlet.json
+*.trx
+*.testlog
+
+# Visual Studio and MSBuild
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.csproj.user
+*.vcxproj.user
+*.rsuser
+*.cachefile
+GeneratedFiles/
+
+# Visual Studio Code and JetBrains IDEs
+.vscode/
+.idea/
+*.sln.iml
+_ReSharper*/
+*.DotSettings.user
+
+# Local configuration and state
+.env
+.env.*
+!.env.example
+*.local
+*.local.json
+appsettings.*.local.json
+secrets.json
+settings.local.json
+.agents/
+runtime/
+
+# Logs, caches, temporary files, and crash dumps
+*.log
+logs/
+.cache/
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.old
+*.orig
+*.swp
+*.swo
+*.dmp
+*.dump
+*.stackdump
+
+# Archives and generated packages
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+
+# OS metadata
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
