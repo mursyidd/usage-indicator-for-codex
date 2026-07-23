@@ -131,7 +131,9 @@ var checks = new (string Name, Action Run)[]
     ("cancels an app-server and cleans up its process", CancelsAndCleansUpAppServer),
     ("quotes a CLI path containing spaces", QuotesCliPath),
     ("runs a spaced cmd launcher through the app-server protocol", RunsSpacedCmdLauncher),
+    ("formats complete application status with a successful exit code", FormatsCompleteApplicationStatus),
     ("loads valid per-user settings", LoadsValidUserSettings),
+    ("inspects status settings without hiding malformed state", InspectsStatusSettingsStrictly),
     ("falls back atomically for malformed settings", FallsBackForMalformedUserSettings),
     ("rejects invalid setting offsets", RejectsInvalidUserSettingOffsets),
     ("uses the ordinary per-user settings path", UsesPerUserSettingsPath),
@@ -142,6 +144,9 @@ var checks = new (string Name, Action Run)[]
     ("enables production live usage for the configured CLI account", ProductionProviderIsEnabled),
     ("enables production startup installation", StartupInstallationIsEnabled),
     ("scopes production startup to the installing user", ScopesStartupToInstallingUser),
+    ("recognizes canonical and legacy startup states", RecognizesStartupStates),
+    ("reports foreign startup task collisions as unrecognized", ReportsStartupCollisionsAsUnrecognized),
+    ("does not hide startup scheduler inspection failures", DoesNotHideStartupInspectionFailures),
     ("removes recognized legacy startup after registering canonical startup", RemovesRecognizedLegacyStartupAfterRegisteringCanonical),
     ("preserves an unrelated legacy-named startup task", PreservesUnrelatedLegacyNamedStartupTask),
     ("leaves legacy startup when canonical registration fails", LeavesLegacyStartupWhenRegistrationFails),
@@ -1153,6 +1158,65 @@ static void LoadsValidUserSettings()
     });
 }
 
+static void FormatsCompleteApplicationStatus()
+{
+    var running = new ApplicationStatusSnapshot(
+        true,
+        false,
+        StartupTaskState.Enabled);
+    AssertEqual(
+        string.Join(
+            Environment.NewLine,
+            "running: true",
+            "indicator-enabled: false",
+            "startup: enabled"),
+        running.Format());
+    AssertEqual(0, running.ExitCode);
+
+    var stopped = new ApplicationStatusSnapshot(
+        false,
+        true,
+        StartupTaskState.Unrecognized);
+    AssertEqual(
+        string.Join(
+            Environment.NewLine,
+            "running: false",
+            "indicator-enabled: true",
+            "startup: unrecognized"),
+        stopped.Format());
+    AssertEqual(0, stopped.ExitCode);
+}
+
+static void InspectsStatusSettingsStrictly()
+{
+    WithTemporaryDirectory("UsageIndicatorForCodex-Status-Settings", directory =>
+    {
+        var canonicalPath = Path.Combine(directory, "canonical", "settings.json");
+        var legacyPath = Path.Combine(directory, "legacy", "settings.json");
+        var store = new UserSettingsStore(canonicalPath, legacyPath);
+
+        AssertEqual(true, store.InspectEnabled());
+
+        Directory.CreateDirectory(Path.GetDirectoryName(legacyPath)!);
+        File.WriteAllText(
+            legacyPath,
+            """{"Enabled":false,"HorizontalOffset":0,"VerticalOffset":6}""");
+        AssertEqual(false, store.InspectEnabled());
+        AssertEqual(false, File.Exists(canonicalPath));
+
+        Directory.CreateDirectory(Path.GetDirectoryName(canonicalPath)!);
+        File.WriteAllText(canonicalPath, """{"Enabled":true,"HorizontalOffset":0,"VerticalOffset":6}""");
+        AssertEqual(true, store.InspectEnabled());
+
+        File.WriteAllText(canonicalPath, """{"Enabled":"invalid","HorizontalOffset":0,"VerticalOffset":6}""");
+        AssertThrows<InvalidDataException>(() => store.InspectEnabled());
+
+        File.Delete(canonicalPath);
+        Directory.CreateDirectory(canonicalPath);
+        AssertThrows<UnauthorizedAccessException>(() => store.InspectEnabled());
+    });
+}
+
 static void FallsBackForMalformedUserSettings()
 {
     WithTemporarySettingsFile(path =>
@@ -1313,6 +1377,96 @@ static void ScopesStartupToInstallingUser()
     AssertEqual("PT1M", configuration.RestartInterval);
     AssertEqual("PT0S", configuration.ExecutionTimeLimit);
     AssertThrows<ArgumentException>(() => StartupTaskManager.CreateConfiguration(string.Empty));
+}
+
+static void RecognizesStartupStates()
+{
+    const string executablePath = @"C:\Apps\UsageIndicatorForCodex.Gui.exe";
+
+    var missing = new RecordingStartupTaskScheduler();
+    AssertEqual(
+        StartupTaskState.Disabled,
+        StartupTaskManager.Inspect(executablePath, missing));
+
+    var canonicalEnabled = new RecordingStartupTaskScheduler();
+    canonicalEnabled.Tasks[StartupTaskManager.TaskName] = new StartupTaskInfo(
+        executablePath,
+        "--background",
+        "Shows the Usage Indicator for Codex companion.",
+        true);
+    AssertEqual(
+        StartupTaskState.Enabled,
+        StartupTaskManager.Inspect(executablePath, canonicalEnabled));
+
+    var canonicalDisabled = new RecordingStartupTaskScheduler();
+    canonicalDisabled.Tasks[StartupTaskManager.TaskName] = new StartupTaskInfo(
+        $""" "{executablePath}" """,
+        "  --background  ",
+        "Shows the Usage Indicator for Codex companion.",
+        false);
+    AssertEqual(
+        StartupTaskState.Disabled,
+        StartupTaskManager.Inspect(executablePath, canonicalDisabled));
+
+    var legacyEnabled = new RecordingStartupTaskScheduler();
+    legacyEnabled.Tasks[StartupTaskManager.LegacyTaskName] = new StartupTaskInfo(
+        @"C:\Legacy\CodexUsageIndicator.exe",
+        "--background",
+        "Shows the Codex usage indicator companion.",
+        true);
+    AssertEqual(
+        StartupTaskState.Enabled,
+        StartupTaskManager.Inspect(executablePath, legacyEnabled));
+}
+
+static void ReportsStartupCollisionsAsUnrecognized()
+{
+    const string executablePath = @"C:\Apps\UsageIndicatorForCodex.Gui.exe";
+    var collision = new RecordingStartupTaskScheduler();
+    collision.Tasks[StartupTaskManager.TaskName] = new StartupTaskInfo(
+        executablePath,
+        "--background",
+        "Shows the Usage Indicator for Codex companion.",
+        true);
+    collision.Tasks[StartupTaskManager.LegacyTaskName] = new StartupTaskInfo(
+        @"C:\Tools\Foreign.exe",
+        "--background",
+        "Foreign task.",
+        true);
+
+    AssertEqual(
+        StartupTaskState.Unrecognized,
+        StartupTaskManager.Inspect(executablePath, collision));
+
+    collision.Tasks[StartupTaskManager.TaskName] = new StartupTaskInfo(
+        @"C:\Tools\Foreign.exe",
+        "--background",
+        "Foreign task.",
+        true);
+    collision.Tasks[StartupTaskManager.LegacyTaskName] = new StartupTaskInfo(
+        @"C:\Legacy\CodexUsageIndicator.exe",
+        "--background",
+        "Shows the Codex usage indicator companion.",
+        true);
+
+    AssertEqual(
+        StartupTaskState.Unrecognized,
+        StartupTaskManager.Inspect(executablePath, collision));
+}
+
+static void DoesNotHideStartupInspectionFailures()
+{
+    var scheduler = new RecordingStartupTaskScheduler
+    {
+        GetFailure = new COMException(
+            "Task metadata is unavailable.",
+            unchecked((int)0x80070005))
+    };
+
+    AssertThrows<COMException>(() =>
+        StartupTaskManager.Inspect(
+            @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
+            scheduler));
 }
 
 static void RemovesRecognizedLegacyStartupAfterRegisteringCanonical()

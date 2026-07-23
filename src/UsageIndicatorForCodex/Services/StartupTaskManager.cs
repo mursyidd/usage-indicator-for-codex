@@ -4,6 +4,13 @@ using System.Security.Principal;
 
 namespace UsageIndicatorForCodex.Services;
 
+internal enum StartupTaskState
+{
+    Enabled,
+    Disabled,
+    Unrecognized
+}
+
 public static class StartupTaskManager
 {
     internal const string TaskName = "UsageIndicatorForCodex";
@@ -56,6 +63,37 @@ public static class StartupTaskManager
         return new StartupTaskConfiguration(userId, "--background", 3, "PT1M", "PT0S");
     }
 
+    internal static StartupTaskState Inspect(string executablePath) =>
+        Inspect(executablePath, new ComStartupTaskScheduler());
+
+    internal static StartupTaskState Inspect(
+        string executablePath,
+        IStartupTaskScheduler scheduler)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
+        ArgumentNullException.ThrowIfNull(scheduler);
+        var expectedPath = NormalizeExecutablePath(executablePath)
+            ?? throw new ArgumentException(
+                "The startup executable path must be fully qualified.",
+                nameof(executablePath));
+        var canonical = scheduler.Get(TaskName);
+        var legacy = scheduler.Get(LegacyTaskName);
+        var canonicalRecognized = canonical is null
+            || IsRecognizedCanonicalTask(canonical, expectedPath);
+        var legacyRecognized = legacy is null || IsRecognizedLegacyTask(legacy);
+        if (!canonicalRecognized || !legacyRecognized)
+        {
+            return StartupTaskState.Unrecognized;
+        }
+
+        if (canonical?.IsEnabled == true || legacy?.IsEnabled == true)
+        {
+            return StartupTaskState.Enabled;
+        }
+
+        return StartupTaskState.Disabled;
+    }
+
     public static void Uninstall() => Uninstall(new ComStartupTaskScheduler());
 
     internal static void Uninstall(IStartupTaskScheduler scheduler)
@@ -101,39 +139,66 @@ public static class StartupTaskManager
             return false;
         }
 
-        var actionPath = task.ExecutablePath.Trim();
-        if (actionPath.Length >= 2 && actionPath[0] == '"' && actionPath[^1] == '"')
-        {
-            actionPath = actionPath[1..^1].Trim();
-        }
-        else if (actionPath.Contains('"'))
-        {
-            return false;
-        }
-
-        try
-        {
-            if (!Path.IsPathFullyQualified(actionPath) || Path.EndsInDirectorySeparator(actionPath))
-            {
-                return false;
-            }
-
-            var normalizedPath = Path.GetFullPath(actionPath);
-            return string.Equals(
+        var normalizedPath = NormalizeExecutablePath(task.ExecutablePath);
+        return normalizedPath is not null
+            && string.Equals(
                 Path.GetFileName(normalizedPath),
                 LegacyExecutableName,
                 StringComparison.OrdinalIgnoreCase);
-        }
-        catch (Exception exception) when (
-            exception is ArgumentException or NotSupportedException or PathTooLongException)
+    }
+
+    internal static bool IsRecognizedCanonicalTask(
+        StartupTaskInfo? task,
+        string expectedExecutablePath)
+    {
+        if (task is null
+            || !string.Equals(
+                task.Arguments.Trim(),
+                BackgroundArgument,
+                StringComparison.Ordinal))
         {
             return false;
         }
+
+        var actualPath = NormalizeExecutablePath(task.ExecutablePath);
+        var expectedPath = NormalizeExecutablePath(expectedExecutablePath);
+        return actualPath is not null
+            && expectedPath is not null
+            && string.Equals(
+                actualPath,
+                expectedPath,
+                StringComparison.OrdinalIgnoreCase);
     }
 
     private static StartupTaskConfiguration CreateConfigurationForCurrentUser() =>
         CreateConfiguration(WindowsIdentity.GetCurrent().User?.Value
             ?? throw new InvalidOperationException("The Windows user could not be identified."));
+
+    private static string? NormalizeExecutablePath(string path)
+    {
+        var candidate = path.Trim();
+        if (candidate.Length >= 2 && candidate[0] == '"' && candidate[^1] == '"')
+        {
+            candidate = candidate[1..^1].Trim();
+        }
+        else if (candidate.Contains('"'))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Path.IsPathFullyQualified(candidate)
+                && !Path.EndsInDirectorySeparator(candidate)
+                ? Path.GetFullPath(candidate)
+                : null;
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
 
     private static void DeleteLegacyTaskIfRecognized(IStartupTaskScheduler scheduler)
     {
@@ -208,19 +273,20 @@ internal sealed class ComStartupTaskScheduler : IStartupTaskScheduler
         var description = (string?)definition.RegistrationInfo.Description ?? string.Empty;
         if ((int)actions.Count != 1)
         {
-            return new StartupTaskInfo(string.Empty, string.Empty, description);
+            return new StartupTaskInfo(string.Empty, string.Empty, description, (bool)task.Enabled);
         }
 
         dynamic action = actions.Item(1);
         if ((int)action.Type != 0) // TASK_ACTION_EXEC
         {
-            return new StartupTaskInfo(string.Empty, string.Empty, description);
+            return new StartupTaskInfo(string.Empty, string.Empty, description, (bool)task.Enabled);
         }
 
         return new StartupTaskInfo(
             (string?)action.Path ?? string.Empty,
             (string?)action.Arguments ?? string.Empty,
-            description);
+            description,
+            (bool)task.Enabled);
     }
 
     public void Register(
@@ -272,4 +338,5 @@ internal sealed record StartupTaskConfiguration(
 internal sealed record StartupTaskInfo(
     string ExecutablePath,
     string Arguments,
-    string Description);
+    string Description,
+    bool IsEnabled = true);

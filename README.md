@@ -88,7 +88,7 @@ Commands are case-sensitive and accept exactly one verb. Running
 ```text
 usage-indicator start             Start the GUI and return immediately
 usage-indicator stop              Stop the canonical running instance
-usage-indicator status            Print running (exit 0) or stopped (exit 1)
+usage-indicator status            Inspect running, indicator, and startup state
 usage-indicator version           Print the product version
 usage-indicator check-update      Report whether a stable update is available
 usage-indicator update            Verify and launch a newer installer
@@ -96,6 +96,19 @@ usage-indicator enable-startup    Register/update current-user logon startup
 usage-indicator disable-startup   Remove owned startup tasks
 usage-indicator help              Show command help
 ```
+
+`status` prints an exact, non-localized three-line record:
+
+```text
+running: true|false
+indicator-enabled: true|false
+startup: enabled|disabled|unrecognized
+```
+
+A complete status inspection returns exit code `0`, including when the
+application is stopped. Settings or Task Scheduler inspection failures return
+exit code `1`. A colliding canonical or legacy task whose action cannot prove
+ownership is reported as `unrecognized`.
 
 `stop`, `enable-startup`, and `disable-startup` are idempotent. Invalid,
 duplicate, combined, or incorrectly cased verbs return exit code 2 and do not

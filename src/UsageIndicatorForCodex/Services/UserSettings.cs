@@ -59,6 +59,26 @@ public sealed class UserSettingsStore
         return Migrate(legacySettings);
     }
 
+    internal bool InspectEnabled()
+    {
+        var canonical = LoadStrictIfPresent(_path);
+        if (canonical is not null)
+        {
+            return canonical.Enabled;
+        }
+
+        if (_legacyPath is not null)
+        {
+            var legacy = LoadStrictIfPresent(_legacyPath);
+            if (legacy is not null)
+            {
+                return legacy.Enabled;
+            }
+        }
+
+        return UserSettings.Default.Enabled;
+    }
+
     public void Save(UserSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -113,6 +133,37 @@ public sealed class UserSettingsStore
     }
 
     private static UserSettings LoadPath(string path) => LoadValid(path) ?? UserSettings.Default;
+
+    private static UserSettings? LoadStrictIfPresent(string path)
+    {
+        try
+        {
+            return LoadStrict(path);
+        }
+        catch (FileNotFoundException)
+        {
+            return null;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    private static UserSettings LoadStrict(string path)
+    {
+        try
+        {
+            var settings = Deserialize(File.ReadAllText(path));
+            return settings is not null && IsValid(settings)
+                ? settings
+                : throw new InvalidDataException($"Settings are malformed: {path}");
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException($"Settings are malformed: {path}", exception);
+        }
+    }
 
     private static UserSettings? LoadValid(string path)
     {

@@ -70,10 +70,23 @@ public partial class App : System.Windows.Application
 
         if (options.Action == CommandLineAction.Status)
         {
-            using var statusInstance = SingleInstanceService.CreateForCurrentUser();
-            var isRunning = !statusInstance.IsPrimary;
-            CommandLineOutput.Show(isRunning ? "running" : "stopped", isError: false);
-            Shutdown(isRunning ? 0 : 1);
+            try
+            {
+                using var statusInstance = SingleInstanceService.CreateForCurrentUser();
+                var snapshot = new ApplicationStatusSnapshot(
+                    !statusInstance.IsPrimary,
+                    new UserSettingsStore().InspectEnabled(),
+                    StartupTaskManager.Inspect(GetExecutablePath()));
+                CommandLineOutput.Show(snapshot.Format(), isError: false);
+                Shutdown(snapshot.ExitCode);
+            }
+            catch (Exception exception)
+            {
+                CommandLineOutput.Show(
+                    $"Status inspection failed. {exception.Message}",
+                    isError: true);
+                Shutdown(1);
+            }
             return;
         }
 
