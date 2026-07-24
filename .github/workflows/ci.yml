@@ -53,32 +53,12 @@ jobs:
             -p:RepositoryUrl="$env:REPOSITORY_URL" `
             --output (Join-Path $env:RUNNER_TEMP 'publish')
 
-      - name: Build portable and installed launchers
+      - name: Build installed launcher
         shell: pwsh
         run: |
-          $publishDirectory = Join-Path $env:RUNNER_TEMP 'publish'
-          .\scripts\build-launcher.ps1 `
-            -Layout Portable `
-            -OutputPath (Join-Path $publishDirectory 'UsageIndicatorForCodex.exe')
           .\scripts\build-launcher.ps1 `
             -Layout Installed `
             -OutputPath (Join-Path $env:RUNNER_TEMP 'usage-indicator.exe')
-
-      - name: Package portable release and validate launchers
-        shell: pwsh
-        run: |
-          . .\scripts\product-metadata.ps1
-          $metadata = Get-UsageIndicatorProductMetadata
-          $publishDirectory = Join-Path $env:RUNNER_TEMP 'publish'
-          $assetDirectory = Join-Path $env:RUNNER_TEMP 'release-assets'
-          $archive = Join-Path $assetDirectory $metadata.PortableAssetName
-          $probe = '.\tests\UsageIndicatorForCodex.LauncherProbe\bin\Release\net8.0\UsageIndicatorForCodex.LauncherProbe.exe'
-          .\scripts\package-release.ps1 -PublishDirectory $publishDirectory -ArchivePath $archive
-          .\tests\console-contract.ps1 `
-            -PublishDirectory $publishDirectory `
-            -LauncherProbe $probe `
-            -InstalledLauncher (Join-Path $env:RUNNER_TEMP 'usage-indicator.exe') `
-            -ArchivePath $archive
 
       - name: Install Inno Setup
         run: choco install innosetup --version=6.7.1 --yes --no-progress
@@ -114,7 +94,6 @@ jobs:
           $assetDirectory = Join-Path $env:RUNNER_TEMP 'release-assets'
           .\scripts\release-assets.ps1 `
             -InstallerPath (Join-Path $assetDirectory $metadata.InstallerAssetName) `
-            -PortableArchivePath (Join-Path $assetDirectory $metadata.PortableAssetName) `
             -OutputDirectory $assetDirectory
           .\tests\release-contract.ps1 -AssetDirectory $assetDirectory
 

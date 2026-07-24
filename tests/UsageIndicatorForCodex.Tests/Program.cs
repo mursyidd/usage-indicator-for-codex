@@ -419,32 +419,31 @@ static void ParsesApplicationCommandsStrictly()
     AssertEqual(CommandLineAction.Run, CommandLineOptions.Parse(["start"]).Action);
     AssertEqual(CommandLineAction.Run, CommandLineOptions.Parse(["--background"]).Action);
     AssertEqual(CommandLineAction.Stop, CommandLineOptions.Parse(["stop"]).Action);
-    AssertEqual(CommandLineAction.Stop, CommandLineOptions.Parse(["--exit"]).Action);
     AssertEqual(CommandLineAction.Status, CommandLineOptions.Parse(["status"]).Action);
     AssertEqual(CommandLineAction.Version, CommandLineOptions.Parse(["version"]).Action);
     AssertEqual(CommandLineAction.CheckUpdate, CommandLineOptions.Parse(["check-update"]).Action);
     AssertEqual(CommandLineAction.Update, CommandLineOptions.Parse(["update"]).Action);
     AssertEqual(CommandLineAction.EnableStartup, CommandLineOptions.Parse(["enable-startup"]).Action);
-    AssertEqual(CommandLineAction.EnableStartup, CommandLineOptions.Parse(["--install"]).Action);
     AssertEqual(CommandLineAction.DisableStartup, CommandLineOptions.Parse(["disable-startup"]).Action);
-    AssertEqual(CommandLineAction.DisableStartup, CommandLineOptions.Parse(["--uninstall"]).Action);
-    AssertEqual(CommandLineAction.Toggle, CommandLineOptions.Parse(["--toggle"]).Action);
-    AssertEqual(CommandLineAction.RevalidateCli, CommandLineOptions.Parse(["--revalidate-cli"]).Action);
     AssertEqual(CommandLineAction.Help, CommandLineOptions.Parse(["help"]).Action);
-    AssertEqual(CommandLineAction.Help, CommandLineOptions.Parse(["--help"]).Action);
-    AssertEqual(CommandLineAction.Help, CommandLineOptions.Parse(["-h"]).Action);
+    AssertEqual(CommandLineAction.Invalid, CommandLineOptions.Parse(["--exit"]).Action);
+    AssertEqual(CommandLineAction.Invalid, CommandLineOptions.Parse(["--install"]).Action);
+    AssertEqual(CommandLineAction.Invalid, CommandLineOptions.Parse(["--uninstall"]).Action);
+    AssertEqual(CommandLineAction.Invalid, CommandLineOptions.Parse(["--toggle"]).Action);
+    AssertEqual(CommandLineAction.Invalid, CommandLineOptions.Parse(["--revalidate-cli"]).Action);
+    AssertEqual(CommandLineAction.Invalid, CommandLineOptions.Parse(["--help"]).Action);
+    AssertEqual(CommandLineAction.Invalid, CommandLineOptions.Parse(["-h"]).Action);
     AssertEqual(CommandLineAction.Invalid, CommandLineOptions.Parse(["--unknown"]).Action);
     AssertEqual(CommandLineAction.Invalid, CommandLineOptions.Parse(["--toggle", "--exit"]).Action);
     AssertEqual(CommandLineAction.Invalid, CommandLineOptions.Parse(["--help", "--help"]).Action);
     AssertEqual(CommandLineAction.Invalid, CommandLineOptions.Parse(["--HELP"]).Action);
-    AssertEqual(0, CommandLineOptions.Parse(["--help"]).ExitCode);
+    AssertEqual(0, CommandLineOptions.Parse(["help"]).ExitCode);
     AssertEqual(2, CommandLineOptions.Parse(["--unknown"]).ExitCode);
     AssertEqual(true, CommandLineOptions.Parse(["--unknown"]).Message.Contains(CommandLineOptions.Usage, StringComparison.Ordinal));
-    AssertEqual(
-        true,
-        CommandLineOptions.Usage.Contains(
-            "Portable updates are not supported; download and run the installer, or replace the complete portable directory manually.",
-            StringComparison.Ordinal));
+    AssertEqual(true, CommandLineOptions.Usage.Contains("usage-indicator update", StringComparison.Ordinal));
+    AssertEqual(false, CommandLineOptions.Usage.Contains("UsageIndicatorForCodex.exe", StringComparison.Ordinal));
+    AssertEqual(false, CommandLineOptions.Usage.Contains("Portable", StringComparison.Ordinal));
+    AssertEqual(false, CommandLineOptions.Usage.Contains("--", StringComparison.Ordinal));
 }
 
 static void SelectsStableUpdatesAndExactAssets()

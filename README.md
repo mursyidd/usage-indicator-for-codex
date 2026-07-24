@@ -26,74 +26,74 @@ visible in Desktop.
   manager.
 - For installer builds, Inno Setup 6.
 
-The installer and portable ZIP contain a self-contained `win-x64` build. They do
-not require a separate .NET runtime and do not install or update .NET, Codex
-CLI, or Codex Desktop.
+The installer contains a self-contained `win-x64` build. It does not require a
+separate .NET runtime and does not install or update .NET, Codex CLI, or Codex
+Desktop.
 
-## Recommended installation
+## Installation
 
-The per-user installer is the recommended distribution:
+The per-user installer is the only supported distribution:
 
-1. Download `UsageIndicatorForCodex-Setup-v0.1.0.exe` and
-   `UsageIndicatorForCodex-Setup-v0.1.0.exe.sha256` from the intended GitHub
-   Release.
-2. Verify the SHA-256 record as described below.
+1. Download these two files from the intended GitHub Release:
+
+   ```text
+   UsageIndicatorForCodex-Setup-v0.1.0.exe
+   UsageIndicatorForCodex-Setup-v0.1.0.exe.sha256
+   ```
+
+2. Verify the checksum:
+
+   ```powershell
+   Get-FileHash .\UsageIndicatorForCodex-Setup-v0.1.0.exe -Algorithm SHA256
+   Get-Content .\UsageIndicatorForCodex-Setup-v0.1.0.exe.sha256
+   ```
+
+   The hexadecimal values must match, and the checksum record must name the
+   exact installer.
+
 3. Run the installer interactively. It installs only for the current user and
    does not request administrator privileges.
 4. Open a new terminal so it receives the updated user `PATH`.
-5. Run `usage-indicator start`.
 
-The installer creates:
+Public builds are currently unsigned. Windows may show Microsoft Defender
+SmartScreen or an unknown-publisher warning. Verify the intended repository and
+tag before deciding whether to run a build; do not disable system-wide security
+protections. A checksum downloaded from the same release detects corruption
+relative to that record but is not independent publisher authentication.
+
+## Installed layout
 
 ```text
 %LOCALAPPDATA%\Programs\UsageIndicatorForCodex\
 ├── app\
 │   ├── UsageIndicatorForCodex.Gui.exe
+│   ├── LICENSE.txt
 │   └── self-contained runtime files
 └── bin\
     └── usage-indicator.exe
 ```
 
-Only the `bin` directory is added to the current user's `PATH`. The installer
-records ownership only when it adds that exact entry. Uninstall therefore
-preserves a matching PATH entry that existed before installation.
+Only `bin` is added to the current user's `PATH`. The installer records
+ownership only when it adds that exact entry, so uninstall preserves a matching
+entry that existed before installation.
 
-The installer includes an optional **Start with Windows** checkbox. It is
-unchecked on a fresh installation, so startup remains an explicit opt-in. On
-upgrade, the installer asks the existing installed CLI for its recognized
-startup state and initializes the checkbox from that result. If status is
-`startup: unrecognized`, the checkbox is unchecked and disabled, a collision
-warning is shown, and the installer makes no startup change.
+`UsageIndicatorForCodex.Gui.exe` is the internal WPF implementation and command
+host. Users should normally use `usage-indicator` instead of invoking it
+directly.
 
-If the old CLI is unavailable, too old, malformed, or cannot complete status
-inspection, the installer preserves the existing startup state. It changes
-startup only when the user explicitly changes the checkbox. Task Scheduler
-registration and removal still run through the installed CLI rather than
-duplicating ownership checks in the installer. The finish page may separately
-offer to start the application normally.
+## Quick start
 
-## Unsigned builds and SHA-256
-
-Public builds are currently unsigned. Windows may show Microsoft Defender
-SmartScreen or an unknown-publisher warning. Verify the intended repository and
-tag before deciding whether to run a build; do not disable system-wide security
-protections.
-
-To compare the installer with its published checksum:
+Open a new terminal after installation, then run:
 
 ```powershell
-Get-FileHash .\UsageIndicatorForCodex-Setup-v0.1.0.exe -Algorithm SHA256
-Get-Content .\UsageIndicatorForCodex-Setup-v0.1.0.exe.sha256
+usage-indicator start
+usage-indicator status
 ```
 
-The hexadecimal values must match and the checksum record must name the exact
-installer. A checksum detects corruption or substitution relative to that
-record, but a checksum downloaded from the same GitHub Release is not an
-independent trust channel. If the repository or release were compromised, both
-the asset and its checksum could be replaced. The project does not currently
-publish an Authenticode signing identity.
+The new terminal is required because terminals that were already open do not
+receive the installer's updated user `PATH`.
 
-## Installed commands
+## Commands
 
 Commands are case-sensitive and accept exactly one verb. Running
 `usage-indicator` without arguments shows help.
@@ -105,12 +105,17 @@ usage-indicator status            Inspect running, indicator, and startup state
 usage-indicator version           Print the product version
 usage-indicator check-update      Report whether a stable update is available
 usage-indicator update            Verify and launch a newer installer
-usage-indicator enable-startup    Register/update current-user logon startup
-usage-indicator disable-startup   Remove owned startup tasks
+usage-indicator enable-startup    Register or update current-user startup
+usage-indicator disable-startup   Remove positively recognized owned tasks
 usage-indicator help              Show command help
 ```
 
-`status` prints an exact, non-localized three-line record:
+This installed `usage-indicator` command is the only public command interface.
+`start`, `stop`, `enable-startup`, and `disable-startup` are idempotent.
+
+## Status and exit codes
+
+`usage-indicator status` prints an exact, non-localized three-line record:
 
 ```text
 running: true|false
@@ -118,22 +123,20 @@ indicator-enabled: true|false
 startup: enabled|disabled|unrecognized
 ```
 
-A complete status inspection returns exit code `0`, including when the
-application is stopped. Settings or Task Scheduler inspection failures return
-exit code `1`. A colliding canonical or legacy task whose action cannot prove
-ownership is reported as `unrecognized`. Startup ownership collisions return
-exit code `2`; operational inspection or mutation failures return exit code
-`1`.
+- `status` exits `0` after a successful inspection, including when the
+  application is stopped or startup is `unrecognized`.
+- `enable-startup` and `disable-startup` exit `2` when a foreign same-name
+  scheduled task is preserved.
+- Operational inspection, scheduler, settings, network, download, or update
+  failures exit `1`.
+- Invalid, duplicate, combined, or incorrectly cased command syntax exits `2`
+  and does not start the companion.
+- A concurrent `usage-indicator update` exits `1`.
 
-`stop`, `enable-startup`, and `disable-startup` are idempotent. Invalid,
-duplicate, combined, or incorrectly cased verbs return exit code `2` and do not
-start the companion. The portable launcher's unsupported `update` verb also
-returns `2`.
+An unrecognized startup state is an ownership warning, not an inspection
+failure. The application refuses to mutate the foreign task.
 
-`UsageIndicatorForCodex.Gui.exe` is the WPF application and managed command
-host. It is not normally invoked directly.
-
-## Automatic startup
+## Start with Windows
 
 Enable current-user logon startup explicitly:
 
@@ -142,15 +145,17 @@ usage-indicator enable-startup
 ```
 
 This creates or updates the current user's `UsageIndicatorForCodex` Task
-Scheduler logon task. The task launches
-`UsageIndicatorForCodex.Gui.exe --background`, has no execution-time limit, and
-retries a crash up to three times at one-minute intervals.
+Scheduler logon task. The task launches the internal GUI in background mode,
+using `UsageIndicatorForCodex.Gui.exe --background`, has no execution-time
+limit, and retries a crash up to three times at one-minute intervals. This is
+an internal scheduled action, not a public command.
 
-For compatibility, ownership inspection also recognizes the previous canonical
-form when the same task launches the exact sibling
-`UsageIndicatorForCodex.exe --background` in the GUI application directory.
-`enable-startup` migrates that recognized launcher-backed task to the direct GUI
-form. A same-name executable in any other directory is foreign.
+For internal upgrade compatibility, ownership inspection also recognizes a
+previous canonical task whose action is the exact sibling
+`UsageIndicatorForCodex.exe --background` in the same application directory.
+This is an internal upgrade compatibility rule, not a supported user command.
+Enabling startup migrates that recognized task to the direct internal GUI form.
+A same-name executable anywhere else is foreign.
 
 Disable startup without deleting settings or application files:
 
@@ -158,100 +163,52 @@ Disable startup without deleting settings or application files:
 usage-indicator disable-startup
 ```
 
-The command and uninstaller remove only positively recognized owned tasks. They
-preserve foreign canonical tasks and preserve a legacy task named
-`CodexUsageIndicator` unless its action is the recognized
-`CodexUsageIndicator.exe --background`. Mixed owned/foreign inventories remove
-the owned entries, preserve the foreign entries, and report an ownership
-collision.
+The command and uninstaller remove only positively recognized owned tasks.
+They preserve foreign canonical tasks and preserve a legacy task named
+`CodexUsageIndicator` unless its action is the recognized historical form.
+Mixed owned and foreign inventories remove owned entries, preserve foreign
+entries, and report an ownership collision.
+
+The installer includes an optional **Start with Windows** checkbox. It is
+unchecked on a fresh installation. On upgrade, the installer initializes it
+from a successful installed-CLI status inspection. If status is
+`startup: unrecognized`, the checkbox is unchecked and disabled, a collision
+warning is shown, and the installer performs zero startup mutation.
+
+If the old installed CLI is unavailable, malformed, or cannot complete
+inspection, the installer preserves the existing startup state unless the user
+explicitly changes the checkbox.
 
 ## Updates
 
-`usage-indicator check-update` queries the latest stable GitHub Release and only
-reports availability. It does not download or install anything.
+`usage-indicator check-update` queries the latest stable GitHub Release and
+reports availability without downloading or installing anything.
 
-`usage-indicator update` is always explicit:
+`usage-indicator update` is explicit:
 
 1. Query the latest stable release.
-2. Select the exact versioned installer and its `.sha256` asset.
+2. Select the exact versioned installer and checksum assets.
 3. Download both to a version-specific temporary directory.
 4. Require the checksum record to name that installer and verify SHA-256.
 5. Stop the running companion.
 6. Launch the installer visibly and interactively.
 
-The updater never copies over installed application files, supplies no silent
-installer flags, and has no timer, service, or automatic background path.
+The updater never copies over installed application files, supplies silent
+installer flags, or runs from a timer, service, or automatic background path.
 Development builds without an explicitly configured GitHub repository URL fail
-closed instead of guessing an owner. A distinct per-user update mutex is
-acquired before release metadata is requested and held through installer
-launch. A concurrent `usage-indicator update` exits with code `1` and:
+closed.
+
+A distinct per-user update mutex is acquired before release metadata is
+requested and held through installer launch. A concurrent update exits `1` and
+prints:
 
 ```text
 An update is already in progress.
 ```
 
-`usage-indicator check-update` does not acquire that mutex.
-
-## Portable distribution
-
-The portable ZIP remains a secondary distribution:
-
-1. Download `usage-indicator-for-codex-v0.1.0-win-x64.zip` and
-   `usage-indicator-for-codex-v0.1.0-win-x64.zip.sha256`.
-2. Verify the exact filename and SHA-256.
-3. Extract the complete ZIP to a permanent directory.
-4. Launch `UsageIndicatorForCodex.exe`.
-
-The ZIP root contains `LICENSE.txt`, copied from the repository `LICENSE`. The
-installer displays the same license and installs it as `app\LICENSE.txt`.
-
-The portable native console launcher remains compatible:
-
-```text
-UsageIndicatorForCodex.exe                 Start immediately
-UsageIndicatorForCodex.exe --background    Start for Task Scheduler
-UsageIndicatorForCodex.exe --install       Enable startup, then exit
-UsageIndicatorForCodex.exe --uninstall     Disable owned startup, then exit
-UsageIndicatorForCodex.exe --toggle        Toggle enabled state
-UsageIndicatorForCodex.exe --revalidate-cli
-                                           Revalidate the configured CLI safely
-UsageIndicatorForCodex.exe --exit          Stop a canonical running instance
-UsageIndicatorForCodex.exe --help
-UsageIndicatorForCodex.exe -h              Show help
-UsageIndicatorForCodex.exe update          Unsupported; exits 2 without updating
-```
-
-Except for no arguments and `--background`, the launcher waits for the WPF
-command process so PowerShell receives complete output and the correct exit
-code. `UsageIndicatorForCodex.exe update` does not migrate or update the
-portable directory; it fails with a clear explanation. Portable updates are
-manual: stop the process, replace the complete extracted directory, and
-re-enable startup if its path changed. Users who want managed updates should
-move to the recommended installer distribution.
-
-## Legacy migration
-
-For a one-time migration from `CodexUsageIndicator`, stop the old process,
-install or extract the new release, and launch it. Recognized legacy startup
-tasks migrate registration-first and are deleted only after the new task is
-registered. Unrecognized same-name tasks are retained.
-
-Settings migrate from:
-
-```text
-%LOCALAPPDATA%\CodexUsageIndicator\settings.json
-```
-
-to:
-
-```text
-%LOCALAPPDATA%\UsageIndicatorForCodex\settings.json
-```
-
-Canonical settings always win. When canonical settings are absent and the
-legacy file is valid, the application creates the canonical file atomically and
-retains the legacy file for rollback. Malformed legacy settings are not
-migrated.
+The mutex is released after success, no update, failure, cancellation, or
+installer handoff. Abandoned mutexes are recovered safely.
+`usage-indicator check-update` does not acquire this mutex.
 
 ## Codex CLI configuration
 
@@ -278,8 +235,7 @@ environment variable:
     'User')
 ```
 
-Open a new terminal or otherwise ensure the new user environment is visible,
-then restart:
+Open a new terminal, then restart the companion:
 
 ```powershell
 usage-indicator stop
@@ -290,15 +246,6 @@ Paths containing spaces are supported. An explicit override is authoritative:
 relative paths, unsupported extensions, missing files, launch failures,
 logged-out CLIs, API-key authentication, incompatible responses, and malformed
 responses fail closed to `Usage unavailable`.
-
-Portable users can validate a changed CLI configuration with:
-
-```powershell
-.\UsageIndicatorForCodex.exe --revalidate-cli
-```
-
-Revalidation reports success or failure only. It does not print identity,
-tokens, or usage values and does not compare CLI and Desktop accounts.
 
 ## Display and controls
 
@@ -311,9 +258,15 @@ tokens, or usage values and does not compare CLI and Desktop accounts.
   active reset window.
 - The overlay hides when no eligible Codex Desktop window is visible, while its
   window is minimized, or when the title bar is too narrow.
-- `Ctrl+Alt+U` and the portable `--toggle` command enable or disable the overlay.
+- `Ctrl+Alt+U` enables or disables the overlay without changing Codex.
 
-Per-user settings are:
+Per-user settings are stored at:
+
+```text
+%LOCALAPPDATA%\UsageIndicatorForCodex\settings.json
+```
+
+The settings schema is:
 
 ```json
 {
@@ -324,9 +277,36 @@ Per-user settings are:
 ```
 
 Offsets are logical pixels from `-500` through `500`. Missing, malformed, or
-invalid canonical settings fall back to defaults.
+invalid canonical settings fall back to defaults. Valid settings from the
+historical `%LOCALAPPDATA%\CodexUsageIndicator\settings.json` location migrate
+atomically only when canonical settings do not already exist.
 
-## Build and test
+## Uninstall
+
+1. Optionally run `usage-indicator disable-startup`. The uninstaller also asks
+   the installed CLI to remove only positively recognized owned startup tasks.
+2. Open **Settings > Apps > Installed apps**, choose **Usage Indicator for
+   Codex**, and select **Uninstall**.
+3. The uninstaller removes application files and only the `PATH` entry recorded
+   as installer-owned.
+4. Optionally delete `%LOCALAPPDATA%\UsageIndicatorForCodex` to remove settings.
+
+If migrated from an older build, optionally remove
+`%LOCALAPPDATA%\CodexUsageIndicator`. Uninstall does not modify Codex CLI or
+Codex Desktop.
+
+## Security and privacy
+
+The companion launches only the configured CLI as `app-server --stdio`, then
+sends `initialize`, `account/read` with `refreshToken: false`, and
+`account/rateLimits/read`. It does not read credential files, browser profiles,
+tokens, or Codex Desktop package files; alter authentication; send model,
+thread, or turn requests; or install or update Codex CLI.
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and the complete
+trust boundary.
+
+## Development and contributing
 
 ```powershell
 dotnet restore .\UsageIndicatorForCodex.sln
@@ -335,99 +315,17 @@ dotnet run --project .\tests\UsageIndicatorForCodex.Tests\UsageIndicatorForCodex
 .\tests\repository-contract.ps1
 ```
 
-The normal suite uses synthetic data and does not require an authenticated
-account. Account-backed probes require deliberate invocation and must not expose
-identity or usage values.
-
-## Publish, package, and installer
-
-Release builds require a GitHub repository URL. The build derives it from an
-existing `origin` remote or accepts an explicit value. GitHub Actions injects
-`${{ github.server_url }}/${{ github.repository }}`. The owner is never guessed.
-
-```powershell
-$repositoryUrl = 'https://github.com/OWNER/REPOSITORY'
-
-dotnet restore .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj --runtime win-x64
-dotnet publish .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj `
-  --configuration Release `
-  --runtime win-x64 `
-  --self-contained true `
-  -p:PublishProfile=win-x64-self-contained `
-  -p:RepositoryUrl=$repositoryUrl `
-  --output .\artifacts\publish\win-x64
-
-.\scripts\build-launcher.ps1 `
-  -Layout Portable `
-  -OutputPath .\artifacts\publish\win-x64\UsageIndicatorForCodex.exe
-
-.\scripts\build-launcher.ps1 `
-  -Layout Installed `
-  -OutputPath .\artifacts\usage-indicator.exe
-
-.\scripts\package-release.ps1 `
-  -PublishDirectory .\artifacts\publish\win-x64 `
-  -ArchivePath .\artifacts\release\usage-indicator-for-codex-v0.1.0-win-x64.zip
-
-.\scripts\build-installer.ps1 `
-  -PublishDirectory .\artifacts\publish\win-x64 `
-  -InstalledLauncher .\artifacts\usage-indicator.exe `
-  -OutputDirectory .\artifacts\release `
-  -RepositoryUrl $repositoryUrl
-
-.\scripts\release-assets.ps1 `
-  -InstallerPath .\artifacts\release\UsageIndicatorForCodex-Setup-v0.1.0.exe `
-  -PortableArchivePath .\artifacts\release\usage-indicator-for-codex-v0.1.0-win-x64.zip `
-  -OutputDirectory .\artifacts\release
-
-.\tests\installer-contract.ps1 `
-  -InstallerPath .\artifacts\release\UsageIndicatorForCodex-Setup-v0.1.0.exe
-.\tests\release-contract.ps1 -AssetDirectory .\artifacts\release
-```
-
-Version `0.1.0` is defined once in `Directory.Build.props`. Release automation
-rejects tags other than exact `v0.1.0` and uploads only:
+Release automation produces exactly:
 
 ```text
 UsageIndicatorForCodex-Setup-v0.1.0.exe
 UsageIndicatorForCodex-Setup-v0.1.0.exe.sha256
-usage-indicator-for-codex-v0.1.0-win-x64.zip
-usage-indicator-for-codex-v0.1.0-win-x64.zip.sha256
 ```
 
-## Uninstall and complete removal
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the installer build, contract checks,
+and contribution requirements.
 
-For an installed copy:
-
-1. Optionally run `usage-indicator disable-startup`; the uninstaller also asks
-   the installed CLI to remove only positively recognized owned startup tasks.
-2. Open **Settings > Apps > Installed apps**, choose **Usage Indicator for
-   Codex**, and select **Uninstall**.
-3. The uninstaller removes application files and only the PATH entry recorded
-   as installer-owned.
-4. Optionally delete `%LOCALAPPDATA%\UsageIndicatorForCodex` to remove settings.
-
-For a portable copy:
-
-1. Run `.\UsageIndicatorForCodex.exe --exit`.
-2. Run `.\UsageIndicatorForCodex.exe --uninstall`.
-3. Delete the extracted directory.
-
-If migrated from the old build, optionally remove
-`%LOCALAPPDATA%\CodexUsageIndicator`. These actions do not modify Codex CLI or
-Codex Desktop.
-
-## Security and privacy boundaries
-
-The companion launches only the configured CLI as `app-server --stdio`, then
-sends `initialize`, `account/read` with `refreshToken: false`, and
-`account/rateLimits/read`. It does not read credential files, browser profiles,
-tokens, or Codex Desktop package files; alter authentication; send model,
-thread, or turn requests; or install/update Codex CLI.
-
-See [SECURITY.md](SECURITY.md) for reporting and the complete trust boundary.
-
-## Limitations
+## Limitations and license
 
 - Desktop and CLI account identities are not automatically correlated.
 - Only the configured CLI account's ChatGPT-plan limits are shown; OpenAI
@@ -441,7 +339,6 @@ See [SECURITY.md](SECURITY.md) for reporting and the complete trust boundary.
 - Windows 10 is unsupported. Windows 11 Arm64 installation is permitted only
   through x64 emulation and remains unverified.
 
-## Contributing and license
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). This project is licensed under the
-[MIT License](LICENSE); `LICENSE.txt` is included in both distributed packages.
+This project is licensed under the [MIT License](LICENSE). The installer
+displays that license and installs the repository-sourced copy as
+`app\LICENSE.txt`.

@@ -42,21 +42,8 @@ dotnet publish .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj `
   --output $publish
 
 .\scripts\build-launcher.ps1 `
-  -Layout Portable `
-  -OutputPath (Join-Path $publish 'UsageIndicatorForCodex.exe')
-.\scripts\build-launcher.ps1 `
   -Layout Installed `
   -OutputPath .\artifacts\usage-indicator.exe
-
-.\scripts\package-release.ps1 `
-  -PublishDirectory $publish `
-  -ArchivePath (Join-Path $release 'usage-indicator-for-codex-v0.1.0-win-x64.zip')
-
-.\tests\console-contract.ps1 `
-  -PublishDirectory $publish `
-  -LauncherProbe .\tests\UsageIndicatorForCodex.LauncherProbe\bin\Release\net8.0\UsageIndicatorForCodex.LauncherProbe.exe `
-  -InstalledLauncher .\artifacts\usage-indicator.exe `
-  -ArchivePath (Join-Path $release 'usage-indicator-for-codex-v0.1.0-win-x64.zip')
 
 .\scripts\build-installer.ps1 `
   -PublishDirectory $publish `
@@ -66,7 +53,6 @@ dotnet publish .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj `
 
 .\scripts\release-assets.ps1 `
   -InstallerPath (Join-Path $release 'UsageIndicatorForCodex-Setup-v0.1.0.exe') `
-  -PortableArchivePath (Join-Path $release 'usage-indicator-for-codex-v0.1.0-win-x64.zip') `
   -OutputDirectory $release
 
 .\tests\installer-contract.ps1 `
@@ -74,10 +60,9 @@ dotnet publish .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj `
 .\tests\release-contract.ps1 -AssetDirectory $release
 ```
 
-Do not weaken package-content, launcher-layout, installer-ownership, version,
-tag, or four-asset checks. The portable archive must contain root
-`LICENSE.txt`, the installer must display and install `app\LICENSE.txt`, and
-both files must remain byte-identical to repository `LICENSE`.
+Do not weaken installed-launcher, installer-ownership, version, tag, or exact
+two-asset checks. The installer must display repository `LICENSE` and install a
+byte-identical copy as `app\LICENSE.txt`.
 
 ## Maintaining the Inno Setup pin
 
@@ -109,11 +94,9 @@ version into application, launcher, installer, workflow, or packaging logic.
 Tests and documentation may name the current expected value and asset contract.
 
 When changing installed commands, update the managed parser, launcher contract,
-README command list, startup/update behavior, and tests together. Preserve the
-portable `UsageIndicatorForCodex.exe` switches unless a compatibility break is
-explicitly approved. The portable `update` verb is intentionally rejected; it
-must never invoke the installed-distribution updater or imply that the portable
-directory was replaced.
+README command list, startup/update behavior, and tests together.
+`usage-indicator` is the only public command interface. Internal implementation
+arguments must not be documented or accepted as public aliases.
 
 ## Security-sensitive changes
 
@@ -136,7 +119,9 @@ Startup ownership must remain path-specific. Both exact canonical forms are
 owned: `UsageIndicatorForCodex.Gui.exe --background` and its exact sibling
 `UsageIndicatorForCodex.exe --background`. Foreign canonical and legacy tasks
 are preserved. Ownership collisions exit `2`, operational inspection failures
-exit `1`, and uninstall removes only positively recognized owned tasks.
+exit `1`, and uninstall removes only positively recognized owned tasks. The
+sibling launcher action exists only for internal upgrade compatibility and must
+not be promoted as a user command.
 
 The installer targets Windows 11 with `ArchitecturesAllowed=x64compatible`.
 That permits Arm64 only through x64 emulation; Arm64 remains unverified and

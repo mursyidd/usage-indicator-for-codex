@@ -68,8 +68,7 @@ the installer interactively. The updater does not replace installed files
 itself, invoke silent installation, or run automatically in the background. A
 distinct per-user mutex is acquired before update network access and held
 through installer launch. Concurrent update commands are rejected with
-`An update is already in progress.`; `check-update` is not locked. The portable
-launcher rejects `update` and never claims to replace a portable directory.
+`An update is already in progress.`; `check-update` is not locked.
 
 Task Scheduler ownership is positive, not name-only. The canonical
 `UsageIndicatorForCodex` task is recognized only when it runs either the exact
@@ -78,7 +77,8 @@ sibling `UsageIndicatorForCodex.exe --background` path. Recognized
 launcher-backed tasks are migrated to the direct GUI form. Foreign canonical
 and legacy tasks are preserved. Ownership collisions return exit code `2`;
 operational inspection failures return `1`. Disable and uninstall remove only
-positively recognized owned tasks.
+positively recognized owned tasks. The sibling launcher form is an internal
+upgrade compatibility rule, not a public command interface.
 
 Repository URL handling, GitHub release parsing, asset selection, temporary
 downloads, checksum verification, process stopping, installer launch, PATH
@@ -92,16 +92,12 @@ The release contract contains only:
 ```text
 UsageIndicatorForCodex-Setup-v0.1.0.exe
 UsageIndicatorForCodex-Setup-v0.1.0.exe.sha256
-usage-indicator-for-codex-v0.1.0-win-x64.zip
-usage-indicator-for-codex-v0.1.0-win-x64.zip.sha256
 ```
 
-The portable packaging process rejects PDBs, source, tests, and
-repository/build-tree content. The portable ZIP includes a root `LICENSE.txt`
-and the installer displays and installs `app\LICENSE.txt`; both come from the
-repository `LICENSE`. CI rebuilds and validates both launchers, installer
-invariants, archive contents, asset names, license content, and checksums before
-a release job uploads the four assets.
+The installer displays the repository `LICENSE` and installs its byte-identical
+copy as `app\LICENSE.txt`. CI rebuilds the self-contained application and
+installed launcher, validates installer invariants, asset names, license
+content, and the checksum, then uploads exactly those two assets.
 
 Public builds are unsigned and do not provide an Authenticode publisher
 identity. Windows may show SmartScreen or unknown-publisher warnings. Obtain
@@ -116,7 +112,7 @@ replace the asset may also replace its checksum.
 ## Supported security scope
 
 Security fixes are evaluated against current source and the self-contained
-Windows x64 installer and portable release documented in the README. Platform
-and bundled runtime support end when their upstream support ends. Windows 11
-Arm64 is permitted by the installer through x64 emulation but remains
-unverified; Windows 10 is unsupported.
+Windows x64 installer documented in the README. Platform and bundled runtime
+support end when their upstream support ends. Windows 11 Arm64 is permitted by
+the installer through x64 emulation but remains unverified; Windows 10 is
+unsupported.

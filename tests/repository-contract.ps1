@@ -100,15 +100,11 @@ if ($metadata.Version -cne '0.1.0') {
 
 $expectedAssets = @(
     'UsageIndicatorForCodex-Setup-v0.1.0.exe',
-    'UsageIndicatorForCodex-Setup-v0.1.0.exe.sha256',
-    'usage-indicator-for-codex-v0.1.0-win-x64.zip',
-    'usage-indicator-for-codex-v0.1.0-win-x64.zip.sha256'
+    'UsageIndicatorForCodex-Setup-v0.1.0.exe.sha256'
 )
 $actualAssets = @(
     $metadata.InstallerAssetName,
-    $metadata.InstallerChecksumAssetName,
-    $metadata.PortableAssetName,
-    $metadata.PortableChecksumAssetName
+    $metadata.InstallerChecksumAssetName
 )
 if (-not [Linq.Enumerable]::SequenceEqual(
     [string[]]$expectedAssets,
@@ -133,10 +129,6 @@ catch {
 
 $commandSource = Get-Content -LiteralPath (
     Join-Path $repositoryRoot 'src\UsageIndicatorForCodex\CommandLineOptions.cs') -Raw
-$launcherSource = Get-Content -LiteralPath (
-    Join-Path $repositoryRoot 'src\UsageIndicatorForCodex.Launcher\launcher.c') -Raw
-$launcherBuild = Get-Content -LiteralPath (
-    Join-Path $repositoryRoot 'scripts\build-launcher.ps1') -Raw
 $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw
 $requiredCommands = @(
     'start',
@@ -158,32 +150,52 @@ foreach ($command in $requiredCommands) {
     }
 }
 
-foreach ($fragment in @(
-    '#define LAUNCHER_REJECT_UPDATE 1',
-    'Portable updates are not supported. Download and run the installer, or replace the complete portable directory manually.',
-    'ExitProcess(2);'
+foreach ($unsupportedPublicArgument in @(
+    '--exit',
+    '--install',
+    '--uninstall',
+    '--toggle',
+    '--revalidate-cli',
+    '--help',
+    '-h'
 )) {
-    if ($launcherSource.IndexOf($fragment, [StringComparison]::Ordinal) -lt 0) {
-        throw "Portable launcher update policy is missing: $fragment"
+    if ($commandSource.IndexOf(
+        """$unsupportedPublicArgument""",
+        [StringComparison]::Ordinal) -ge 0) {
+        throw "Managed parser still supports non-public argument: $unsupportedPublicArgument"
     }
 }
-foreach ($fragment in @(
-    '$rejectUpdate = if ($Layout -ceq ''Portable'') { 1 } else { 0 }',
-    '"/DLAUNCHER_REJECT_UPDATE=$rejectUpdate"'
+foreach ($forbiddenHelpFragment in @(
+    'UsageIndicatorForCodex.exe',
+    'Portable compatibility',
+    'Portable updates'
 )) {
-    if ($launcherBuild.IndexOf($fragment, [StringComparison]::Ordinal) -lt 0) {
-        throw "Launcher build layout policy is missing: $fragment"
+    if ($commandSource.IndexOf($forbiddenHelpFragment, [StringComparison]::Ordinal) -ge 0) {
+        throw "Managed help still advertises a non-public interface: $forbiddenHelpFragment"
     }
 }
 
 $publicContractDocuments = [ordered]@{
     'README.md' = @(
-        'UsageIndicatorForCodex.exe --background',
+        '## Installation',
+        '## Installed layout',
+        '## Quick start',
+        '## Commands',
+        '## Status and exit codes',
+        '## Start with Windows',
+        '## Updates',
+        '## Codex CLI configuration',
+        '## Display and controls',
+        '## Uninstall',
+        '## Security and privacy',
+        '## Development and contributing',
+        '## Limitations and license',
+        'internal upgrade compatibility rule',
         'foreign canonical tasks',
-        'ownership collisions return',
+        'exits `2`',
         'startup: unrecognized',
         'An update is already in progress.',
-        'UsageIndicatorForCodex.exe update',
+        'UsageIndicatorForCodex.Gui.exe',
         'LICENSE.txt',
         'Arm64'
     )
@@ -198,6 +210,7 @@ $publicContractDocuments = [ordered]@{
     'CONTRIBUTING.md' = @(
         'UsageIndicatorForCodex.Gui.exe --background',
         'UsageIndicatorForCodex.exe --background',
+        'internal upgrade compatibility',
         'Ownership collisions exit `2`',
         'operational inspection failures',
         'LICENSE.txt',
@@ -206,6 +219,7 @@ $publicContractDocuments = [ordered]@{
     '2026-07-23-usage-indicator-for-codex-design.md' = @(
         'Distribution and Command Architecture',
         'UsageIndicatorForCodex.exe --background',
+        'internal upgrade compatibility',
         'Ownership collisions exit `2`',
         'An update is already in progress.',
         'LICENSE.txt',
@@ -218,6 +232,29 @@ foreach ($documentEntry in $publicContractDocuments.GetEnumerator()) {
     foreach ($fragment in $documentEntry.Value) {
         if ($document.IndexOf($fragment, [StringComparison]::Ordinal) -lt 0) {
             throw "$($documentEntry.Key) is missing public contract text: $fragment"
+        }
+    }
+}
+
+foreach ($documentPath in $publicContractDocuments.Keys) {
+    $document = Get-Content -LiteralPath (Join-Path $repositoryRoot $documentPath) -Raw
+    foreach ($forbiddenPublicFragment in @(
+        'UsageIndicatorForCodex.exe --install',
+        'UsageIndicatorForCodex.exe --uninstall',
+        'UsageIndicatorForCodex.exe --toggle',
+        'UsageIndicatorForCodex.exe --revalidate-cli',
+        'UsageIndicatorForCodex.exe --exit',
+        'UsageIndicatorForCodex.exe --help',
+        'UsageIndicatorForCodex.exe -h',
+        'usage-indicator-for-codex-v0.1.0-win-x64.zip',
+        'portable distribution',
+        'portable release',
+        'portable update'
+    )) {
+        if ($document.IndexOf(
+            $forbiddenPublicFragment,
+            [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            throw "$documentPath still advertises removed public behavior: $forbiddenPublicFragment"
         }
     }
 }
@@ -235,6 +272,20 @@ foreach ($documentPath in @('README.md', 'SECURITY.md')) {
         if ($document.IndexOf($assetName, [StringComparison]::Ordinal) -lt 0) {
             throw "$documentPath is missing release asset $assetName."
         }
+    }
+}
+
+$releaseAssetScript = Get-Content -LiteralPath (
+    Join-Path $repositoryRoot 'scripts\release-assets.ps1') -Raw
+foreach ($forbiddenReleaseFragment in @(
+    'PortableArchivePath',
+    'PortableAssetName',
+    'PortableChecksumAssetName'
+)) {
+    if ($releaseAssetScript.IndexOf(
+        $forbiddenReleaseFragment,
+        [StringComparison]::Ordinal) -ge 0) {
+        throw "Release asset script still requires a portable artifact: $forbiddenReleaseFragment"
     }
 }
 
@@ -264,6 +315,19 @@ $workflowContracts = [ordered]@{
 }
 $workflowPins = [Collections.Generic.List[string]]::new()
 foreach ($workflowEntry in $workflowContracts.GetEnumerator()) {
+    foreach ($forbiddenWorkflowFragment in @(
+        '-Layout Portable',
+        'PortableArchivePath',
+        'PortableAssetName',
+        'package-release.ps1'
+    )) {
+        if ($workflowEntry.Value.IndexOf(
+            $forbiddenWorkflowFragment,
+            [StringComparison]::Ordinal) -ge 0) {
+            throw "$($workflowEntry.Key) still publishes or packages a portable artifact: $forbiddenWorkflowFragment"
+        }
+    }
+
     $installCommands = @(
         [regex]::Matches(
             $workflowEntry.Value,
