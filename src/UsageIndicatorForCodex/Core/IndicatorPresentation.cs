@@ -90,11 +90,12 @@ public static class IndicatorPresentation
 
     public static double GetAvailableOverlayWidth(double codexWindowWidth) => Math.Max(0, codexWindowWidth - ReservedTitleBarWidth);
 
-    public static string FormatResetTime(DateTimeOffset resetAt)
+    public static string FormatResetTime(DateTimeOffset resetAt) => FormatResetTime(resetAt, TimeZoneInfo.Local);
+
+    public static string FormatResetTime(DateTimeOffset resetAt, TimeZoneInfo timezone)
     {
-        var malaysia = TimeZoneInfo.FindSystemTimeZoneById("Singapore Standard Time");
-        var local = TimeZoneInfo.ConvertTime(resetAt, malaysia);
-        return local.ToString("d MMMM h:mm tt", CultureInfo.GetCultureInfo("en-MY"))
+        var local = TimeZoneInfo.ConvertTime(resetAt, timezone);
+        return local.ToString("d MMMM h:mm tt", CultureInfo.GetCultureInfo("en-US"))
             .Replace("AM", "am", StringComparison.Ordinal)
             .Replace("PM", "pm", StringComparison.Ordinal);
     }

@@ -29,15 +29,15 @@ through x64 emulation but remains unverified; Windows 10 is unsupported.
 The full indicator is:
 
 ```text
-Usage [████████████████████] 100% left | 24 July 10:30 am
+Usage [████████████████████] 100% left | [local reset timestamp]
 ```
 
 Display rules:
 
 - Show only the active usage limit with the lowest remaining percentage.
 - Show the reset timestamp belonging to that selected limit.
-- Convert the timestamp to Malaysia time internally.
-- Do not display `Resets`, `expires`, or `MYT`.
+- Convert the timestamp to the user's Windows local time internally.
+- Do not display `Resets`, `expires`, a timezone abbreviation, or a UTC offset.
 - Format the timestamp as `D Month h:mm am/pm`.
 - Fill the bar in proportion to the remaining percentage.
 - Do not animate or flash the indicator.
@@ -56,7 +56,7 @@ Color is supplemental. The numeric percentage remains visible so that the indica
 The companion selects the largest layout that fits without covering Codex controls:
 
 ```text
-Normal:      Usage [████████████████████] 100% left | 24 July 10:30 am
+Normal:      Usage [████████████████████] 100% left | [local reset timestamp]
 Narrow:      Usage [████████████] 100% left
 Very narrow: Usage 100%
 Too narrow:  hidden
@@ -221,10 +221,10 @@ Uninstallation must not modify or repair Codex.
 
 The design is satisfied when:
 
-1. The visible display remains exactly `Usage [████████████████████] 100% left | 24 July 10:30 am`, with the approved narrow, loading, and unavailable variants.
+1. The visible display remains `Usage [████████████████████] 100% left | [local reset timestamp]`, with the approved narrow, loading, and unavailable variants.
 2. The indicator uses the approved text, date, percentage, color, and responsive formats.
 3. Only the most restrictive active limit is displayed.
-4. Timestamps are formatted in Malaysia time without a timezone label.
+4. Timestamps are formatted in the user's Windows local time without a timezone label or UTC offset.
 5. Documentation and runtime behavior identify the configured local Codex CLI account as the sole usage scope; they make no claim of automatic Desktop-account following.
 6. Missing CLI authentication, incompatible or malformed responses, timeouts, and provider failures produce the neutral unavailable state.
 7. Starting through `usage-indicator` validates the configured CLI account without reading credentials or emitting account, token, or usage data.
