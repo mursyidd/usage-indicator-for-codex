@@ -145,11 +145,15 @@ var checks = new (string Name, Action Run)[]
     ("enables production startup installation", StartupInstallationIsEnabled),
     ("scopes production startup to the installing user", ScopesStartupToInstallingUser),
     ("recognizes canonical and legacy startup states", RecognizesStartupStates),
+    ("recognizes launcher-backed canonical startup states", RecognizesLauncherBackedCanonicalStartupStates),
     ("reports foreign startup task collisions as unrecognized", ReportsStartupCollisionsAsUnrecognized),
     ("does not hide startup scheduler inspection failures", DoesNotHideStartupInspectionFailures),
     ("rejects startup enable when canonical ownership is unrecognized", RejectsEnableWithForeignCanonicalTask),
     ("rejects startup enable when legacy ownership is unrecognized", RejectsEnableWithForeignLegacyTask),
     ("updates only a recognized canonical startup task", UpdatesRecognizedCanonicalStartupTask),
+    ("migrates a launcher-backed canonical startup task to the GUI", MigratesLauncherBackedCanonicalStartupTask),
+    ("removes a launcher-backed canonical startup task during disable and uninstall", RemovesLauncherBackedCanonicalStartupTask),
+    ("preserves foreign same-name launcher collisions without mutation", PreservesForeignLauncherCollisionsWithoutMutation),
     ("preserves foreign startup tasks during disable", PreservesForeignTasksDuringDisable),
     ("removes owned tasks but reports mixed foreign startup collisions", CleansOwnedTasksAndReportsMixedCollisions),
     ("removes recognized legacy startup after registering canonical startup", RemovesRecognizedLegacyStartupAfterRegisteringCanonical),
@@ -1425,6 +1429,30 @@ static void RecognizesStartupStates()
         StartupTaskManager.Inspect(executablePath, legacyEnabled));
 }
 
+static void RecognizesLauncherBackedCanonicalStartupStates()
+{
+    const string executablePath = @"C:\Apps\UsageIndicatorForCodex.Gui.exe";
+    var enabled = new RecordingStartupTaskScheduler();
+    enabled.Tasks[StartupTaskManager.TaskName] = new StartupTaskInfo(
+        @"C:\Apps\UsageIndicatorForCodex.exe",
+        "--background",
+        "Shows the Usage Indicator for Codex companion.",
+        true);
+    AssertEqual(
+        StartupTaskState.Enabled,
+        StartupTaskManager.Inspect(executablePath, enabled));
+
+    var disabled = new RecordingStartupTaskScheduler();
+    disabled.Tasks[StartupTaskManager.TaskName] = new StartupTaskInfo(
+        @"  ""C:\Apps\.\UsageIndicatorForCodex.exe""  ",
+        "  --background  ",
+        "Shows the Usage Indicator for Codex companion.",
+        false);
+    AssertEqual(
+        StartupTaskState.Disabled,
+        StartupTaskManager.Inspect(executablePath, disabled));
+}
+
 static void ReportsStartupCollisionsAsUnrecognized()
 {
     const string executablePath = @"C:\Apps\UsageIndicatorForCodex.Gui.exe";
@@ -1541,6 +1569,76 @@ static void UpdatesRecognizedCanonicalStartupTask()
         $"Register:{StartupTaskManager.TaskName}:{StartupTaskRegistrationMode.Update}",
         scheduler.Operations[2]);
     AssertEqual(true, scheduler.Tasks[StartupTaskManager.TaskName].IsEnabled);
+}
+
+static void MigratesLauncherBackedCanonicalStartupTask()
+{
+    const string executablePath = @"C:\Apps\UsageIndicatorForCodex.Gui.exe";
+    var scheduler = new RecordingStartupTaskScheduler();
+    scheduler.Tasks[StartupTaskManager.TaskName] = new StartupTaskInfo(
+        @"C:\Apps\UsageIndicatorForCodex.exe",
+        "--background",
+        "Shows the Usage Indicator for Codex companion.",
+        false);
+
+    StartupTaskManager.Install(executablePath, scheduler);
+
+    AssertEqual(3, scheduler.Operations.Count);
+    AssertEqual(
+        $"Register:{StartupTaskManager.TaskName}:{StartupTaskRegistrationMode.Update}",
+        scheduler.Operations[2]);
+    AssertEqual(executablePath, scheduler.RegisteredExecutablePath!);
+    AssertEqual(true, scheduler.Tasks[StartupTaskManager.TaskName].IsEnabled);
+}
+
+static void RemovesLauncherBackedCanonicalStartupTask()
+{
+    const string executablePath = @"C:\Apps\UsageIndicatorForCodex.Gui.exe";
+    var scheduler = new RecordingStartupTaskScheduler();
+    scheduler.Tasks[StartupTaskManager.TaskName] = new StartupTaskInfo(
+        @"C:\Apps\UsageIndicatorForCodex.exe",
+        "--background",
+        "Shows the Usage Indicator for Codex companion.");
+
+    StartupTaskManager.Uninstall(executablePath, scheduler);
+
+    AssertEqual(false, scheduler.Tasks.ContainsKey(StartupTaskManager.TaskName));
+    AssertEqual(3, scheduler.Operations.Count);
+    AssertEqual($"Delete:{StartupTaskManager.TaskName}", scheduler.Operations[2]);
+}
+
+static void PreservesForeignLauncherCollisionsWithoutMutation()
+{
+    const string executablePath = @"C:\Apps\UsageIndicatorForCodex.Gui.exe";
+    foreach (var foreignPath in new[]
+    {
+        @"C:\OtherApps\UsageIndicatorForCodex.exe",
+        @"C:\Apps\Nested\UsageIndicatorForCodex.exe",
+        @"\\server\share\UsageIndicatorForCodex.exe"
+    })
+    {
+        var scheduler = new RecordingStartupTaskScheduler();
+        var foreign = new StartupTaskInfo(
+            foreignPath,
+            "--background",
+            "Foreign task.");
+        scheduler.Tasks[StartupTaskManager.TaskName] = foreign;
+
+        AssertEqual(
+            StartupTaskState.Unrecognized,
+            StartupTaskManager.Inspect(executablePath, scheduler));
+        AssertThrows<StartupTaskOwnershipException>(() =>
+            StartupTaskManager.Install(executablePath, scheduler));
+        AssertThrows<StartupTaskOwnershipException>(() =>
+            StartupTaskManager.Uninstall(executablePath, scheduler));
+
+        AssertEqual(foreign, scheduler.Tasks[StartupTaskManager.TaskName]);
+        AssertEqual(
+            false,
+            scheduler.Operations.Any(operation =>
+                operation.StartsWith("Register:", StringComparison.Ordinal)
+                || operation.StartsWith("Delete:", StringComparison.Ordinal)));
+    }
 }
 
 static void PreservesForeignTasksDuringDisable()

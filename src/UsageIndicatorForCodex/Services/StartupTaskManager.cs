@@ -31,6 +31,7 @@ public static class StartupTaskManager
 {
     internal const string TaskName = "UsageIndicatorForCodex";
     internal const string LegacyTaskName = "CodexUsageIndicator";
+    internal const string LauncherExecutableName = "UsageIndicatorForCodex.exe";
     internal const string LegacyExecutableName = "CodexUsageIndicator.exe";
     internal const int OwnershipCollisionExitCode = 2;
     private const string BackgroundArgument = "--background";
@@ -210,12 +211,29 @@ public static class StartupTaskManager
 
         var actualPath = NormalizeExecutablePath(task.ExecutablePath);
         var expectedPath = NormalizeExecutablePath(expectedExecutablePath);
-        return actualPath is not null
-            && expectedPath is not null
-            && string.Equals(
-                actualPath,
-                expectedPath,
-                StringComparison.OrdinalIgnoreCase);
+        if (actualPath is null || expectedPath is null)
+        {
+            return false;
+        }
+
+        if (string.Equals(actualPath, expectedPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var applicationDirectory = Path.GetDirectoryName(expectedPath);
+        if (string.IsNullOrWhiteSpace(applicationDirectory))
+        {
+            return false;
+        }
+
+        var expectedLauncherPath = Path.Combine(
+            applicationDirectory,
+            LauncherExecutableName);
+        return string.Equals(
+            actualPath,
+            expectedLauncherPath,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private static StartupTaskConfiguration CreateConfigurationForCurrentUser() =>
