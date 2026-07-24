@@ -15,8 +15,6 @@ internal enum CommandLineAction
     Update,
     EnableStartup,
     DisableStartup,
-    Toggle,
-    RevalidateCli,
     Help,
     Invalid
 }

@@ -6,6 +6,11 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\scripts\product-metadata.ps1')
 $metadata = Get-UsageIndicatorProductMetadata
+foreach ($portableProperty in @('PortableAssetName', 'PortableChecksumAssetName')) {
+    if ($metadata.PSObject.Properties.Name -ccontains $portableProperty) {
+        throw "Release metadata still exposes a portable asset property: $portableProperty"
+    }
+}
 $assetRoot = (Resolve-Path -LiteralPath $AssetDirectory).Path
 $expectedNames = @(
     $metadata.InstallerAssetName,

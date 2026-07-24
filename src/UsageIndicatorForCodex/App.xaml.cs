@@ -118,42 +118,7 @@ public partial class App : System.Windows.Application
         }
 
         var settingsStore = new UserSettingsStore();
-        var command = options.Action switch
-        {
-            CommandLineAction.Toggle => InstanceCommand.Toggle,
-            CommandLineAction.RevalidateCli => InstanceCommand.RevalidateCli,
-            _ => (InstanceCommand?)null
-        };
         var singleInstance = SingleInstanceService.CreateForCurrentUser();
-        if (command is not null)
-        {
-            if (!singleInstance.IsPrimary)
-            {
-                var pipeNames = singleInstance.GetPipeNamesForCommand(command.Value);
-                singleInstance.Dispose();
-                _ = SendCommandAndShutdownAsync(pipeNames, command.Value);
-                return;
-            }
-
-            singleInstance.Dispose();
-            if (command == InstanceCommand.Toggle)
-            {
-                var settings = settingsStore.Load();
-                settingsStore.Save(settings with { Enabled = !settings.Enabled });
-                Shutdown(0);
-            }
-            else if (command == InstanceCommand.RevalidateCli)
-            {
-                _ = RevalidateCliAndShutdownAsync();
-            }
-            else
-            {
-                Shutdown(0);
-            }
-
-            return;
-        }
-
         _singleInstance = singleInstance;
         if (!_singleInstance.IsPrimary)
         {
@@ -197,12 +162,7 @@ public partial class App : System.Windows.Application
                 return false;
             }
 
-            return command switch
-            {
-                InstanceCommand.Toggle => ToggleCoordinator(),
-                InstanceCommand.RevalidateCli => await _coordinator.RevalidateAsync(),
-                _ => false
-            };
+            return command == InstanceCommand.Exit;
         });
         return await operation.Task.Unwrap();
     }
@@ -214,49 +174,6 @@ public partial class App : System.Windows.Application
             _ = Dispatcher.BeginInvoke(
                 System.Windows.Threading.DispatcherPriority.ContextIdle,
                 new Action(() => Shutdown(0)));
-        }
-    }
-
-    private bool ToggleCoordinator()
-    {
-        _coordinator?.ToggleEnabled();
-        return _coordinator is not null;
-    }
-
-    private async Task SendCommandAndShutdownAsync(IReadOnlyList<string> pipeNames, InstanceCommand command)
-    {
-        var succeeded = await SingleInstanceService.TrySendAsync(pipeNames, command);
-        if (command == InstanceCommand.RevalidateCli)
-        {
-            MessageBox.Show(
-                succeeded == true
-                    ? "The configured Codex CLI returned a verified usage response. This does not compare it with Codex Desktop and does not enable live usage."
-                    : "The configured Codex CLI could not be revalidated. Usage remains unavailable.",
-                "Usage Indicator for Codex",
-                MessageBoxButton.OK,
-                succeeded == true ? MessageBoxImage.Information : MessageBoxImage.Warning);
-        }
-
-        Shutdown(succeeded == true ? 0 : 1);
-    }
-
-    private async Task RevalidateCliAndShutdownAsync()
-    {
-        try
-        {
-            var snapshot = await new CodexCliAppServerReader().ReadAsync(CancellationToken.None);
-            if (string.IsNullOrWhiteSpace(snapshot.AccountFingerprint) || snapshot.ResetsAt <= DateTimeOffset.UtcNow || snapshot.RemainingPercent is < 0 or > 100)
-            {
-                throw new InvalidOperationException("The configured Codex CLI did not return a verifiable usage response.");
-            }
-
-            MessageBox.Show("The configured Codex CLI returned a verified usage response. This does not compare it with Codex Desktop and does not enable live usage.", "Usage Indicator for Codex", MessageBoxButton.OK, MessageBoxImage.Information);
-            Shutdown(0);
-        }
-        catch
-        {
-            MessageBox.Show("The configured Codex CLI could not be revalidated. Usage remains unavailable.", "Usage Indicator for Codex", MessageBoxButton.OK, MessageBoxImage.Warning);
-            Shutdown(1);
         }
     }
 
@@ -346,7 +263,7 @@ public partial class App : System.Windows.Application
             return true;
         }
 
-        var pipeNames = instance.GetPipeNamesForCommand(InstanceCommand.Exit);
+        var pipeNames = instance.GetPipeNamesForExit();
         instance.Dispose();
         if (await SingleInstanceService.TrySendAsync(pipeNames, InstanceCommand.Exit) != true)
         {

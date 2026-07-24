@@ -42,8 +42,11 @@ dotnet publish .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj `
   --output $publish
 
 .\scripts\build-launcher.ps1 `
-  -Layout Installed `
   -OutputPath .\artifacts\usage-indicator.exe
+
+.\tests\installed-launcher-contract.ps1 `
+  -InstalledLauncher .\artifacts\usage-indicator.exe `
+  -LauncherProbe .\tests\UsageIndicatorForCodex.LauncherProbe\bin\Release\net8.0\UsageIndicatorForCodex.LauncherProbe.exe
 
 .\scripts\build-installer.ps1 `
   -PublishDirectory $publish `

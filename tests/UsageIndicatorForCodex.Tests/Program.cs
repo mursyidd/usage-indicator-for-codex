@@ -112,8 +112,7 @@ var checks = new (string Name, Action Run)[]
     ("keeps the update mutex through successful installer handoff", KeepsUpdateMutexThroughInstallerHandoff),
     ("routes commands to a single primary instance", RoutesCommandsToPrimaryInstance),
     ("coordinates canonical and legacy instance identities", CoordinatesCanonicalAndLegacyInstances),
-    ("serves canonical and legacy command pipes", ServesCanonicalAndLegacyCommandPipes),
-    ("waits for a revalidation command response", WaitsForRevalidationCommandResponse),
+    ("serves the canonical stop command pipe", ServesCanonicalStopCommandPipe),
     ("fails command delivery cleanly when no primary pipe exists", FailsCommandDeliveryWithoutPrimaryPipe),
     ("retains the attached Codex window across foreign focus", RetainsAttachedWindowAcrossForeignFocus),
     ("retains the attached Codex window while minimized", RetainsMinimizedAttachedWindow),
@@ -776,12 +775,12 @@ static void RoutesCommandsToPrimaryInstance()
     primary.Start((command, _) =>
     {
         received = command;
-        return Task.FromResult(command == InstanceCommand.Toggle);
+        return Task.FromResult(command == InstanceCommand.Exit);
     });
 
-    var result = SingleInstanceService.TrySendAsync(primary.PipeName, InstanceCommand.Toggle).GetAwaiter().GetResult();
+    var result = SingleInstanceService.TrySendAsync(primary.PipeName, InstanceCommand.Exit).GetAwaiter().GetResult();
     AssertEqual(true, result ?? false);
-    AssertEqual(InstanceCommand.Toggle, received ?? throw new InvalidOperationException("The primary did not receive a command."));
+    AssertEqual(InstanceCommand.Exit, received ?? throw new InvalidOperationException("The primary did not receive a command."));
 }
 
 static void CoordinatesCanonicalAndLegacyInstances()
@@ -793,9 +792,8 @@ static void CoordinatesCanonicalAndLegacyInstances()
     AssertEqual($"UsageIndicatorForCodex-{userIdentity}", primary.PipeName);
     AssertEqual($"Local\\CodexUsageIndicator-{userIdentity}", primary.LegacyMutexName);
     AssertEqual($"CodexUsageIndicator-{userIdentity}", primary.LegacyPipeName);
-    AssertEqual(1, primary.GetPipeNamesForCommand(InstanceCommand.Exit).Count);
-    AssertEqual(primary.PipeName, primary.GetPipeNamesForCommand(InstanceCommand.Exit)[0]);
-    AssertEqual(2, primary.GetPipeNamesForCommand(InstanceCommand.Toggle).Count);
+    AssertEqual(1, primary.GetPipeNamesForExit().Count);
+    AssertEqual(primary.PipeName, primary.GetPipeNamesForExit()[0]);
 
     var blockedIdentity = $"S-1-5-21-{Guid.NewGuid():N}";
     var canonicalMutexName = $"Local\\UsageIndicatorForCodex-{blockedIdentity}";
@@ -811,7 +809,7 @@ static void CoordinatesCanonicalAndLegacyInstances()
     releasedCanonicalMutex.ReleaseMutex();
 }
 
-static void ServesCanonicalAndLegacyCommandPipes()
+static void ServesCanonicalStopCommandPipe()
 {
     var userIdentity = $"S-1-5-21-{Guid.NewGuid():N}";
     using var primary = new SingleInstanceService(userIdentity);
@@ -825,43 +823,21 @@ static void ServesCanonicalAndLegacyCommandPipes()
         },
         command => responsesSent.Add(command));
 
-    var legacyResult = SingleInstanceService.TrySendAsync(primary.LegacyPipeName, InstanceCommand.Toggle)
-        .GetAwaiter()
-        .GetResult();
-    AssertEqual(true, legacyResult ?? false);
-
     var orderedResult = SingleInstanceService.TrySendAsync(
             [$"UsageIndicatorForCodex-missing-{Guid.NewGuid():N}", primary.PipeName],
             InstanceCommand.Exit)
         .GetAwaiter()
         .GetResult();
     AssertEqual(true, orderedResult ?? false);
-    AssertEqual(2, received.Count);
-    AssertEqual(InstanceCommand.Toggle, received[0]);
-    AssertEqual(InstanceCommand.Exit, received[1]);
-    AssertEqual(2, responsesSent.Count);
-    AssertEqual(InstanceCommand.Toggle, responsesSent[0]);
-    AssertEqual(InstanceCommand.Exit, responsesSent[1]);
-}
-
-static void WaitsForRevalidationCommandResponse()
-{
-    var userIdentity = $"S-1-5-21-{Guid.NewGuid():N}";
-    using var primary = new SingleInstanceService(userIdentity);
-    primary.Start(async (command, cancellationToken) =>
-    {
-        AssertEqual(InstanceCommand.RevalidateCli, command);
-        await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
-        return true;
-    });
-
-    var result = SingleInstanceService.TrySendAsync(primary.PipeName, InstanceCommand.RevalidateCli).GetAwaiter().GetResult();
-    AssertEqual(true, result ?? false);
+    AssertEqual(1, received.Count);
+    AssertEqual(InstanceCommand.Exit, received[0]);
+    AssertEqual(1, responsesSent.Count);
+    AssertEqual(InstanceCommand.Exit, responsesSent[0]);
 }
 
 static void FailsCommandDeliveryWithoutPrimaryPipe()
 {
-    var result = SingleInstanceService.TrySendAsync($"UsageIndicatorForCodex-missing-{Guid.NewGuid():N}", InstanceCommand.Toggle)
+    var result = SingleInstanceService.TrySendAsync($"UsageIndicatorForCodex-missing-{Guid.NewGuid():N}", InstanceCommand.Exit)
         .GetAwaiter()
         .GetResult();
     if (result is not null)

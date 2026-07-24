@@ -57,8 +57,14 @@ jobs:
         shell: pwsh
         run: |
           .\scripts\build-launcher.ps1 `
-            -Layout Installed `
             -OutputPath (Join-Path $env:RUNNER_TEMP 'usage-indicator.exe')
+
+      - name: Validate installed launcher contract
+        shell: pwsh
+        run: |
+          .\tests\installed-launcher-contract.ps1 `
+            -InstalledLauncher (Join-Path $env:RUNNER_TEMP 'usage-indicator.exe') `
+            -LauncherProbe .\tests\UsageIndicatorForCodex.LauncherProbe\bin\Release\net8.0\UsageIndicatorForCodex.LauncherProbe.exe
 
       - name: Install Inno Setup
         run: choco install innosetup --version=6.7.1 --yes --no-progress

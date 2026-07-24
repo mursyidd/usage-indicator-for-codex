@@ -97,6 +97,14 @@ $metadata = Get-UsageIndicatorProductMetadata -RepositoryRoot $repositoryRoot
 if ($metadata.Version -cne '0.1.0') {
     throw "Unexpected product version: $($metadata.Version)"
 }
+foreach ($portableProperty in @('PortableAssetName', 'PortableChecksumAssetName')) {
+    if ($metadata.PSObject.Properties.Name -ccontains $portableProperty) {
+        throw "Product metadata still exposes a portable asset property: $portableProperty"
+    }
+}
+if (Test-Path -LiteralPath (Join-Path $repositoryRoot 'scripts\package-release.ps1')) {
+    throw 'The obsolete portable package-release.ps1 script must not exist.'
+}
 
 $expectedAssets = @(
     'UsageIndicatorForCodex-Setup-v0.1.0.exe',
@@ -257,6 +265,11 @@ foreach ($documentPath in $publicContractDocuments.Keys) {
             throw "$documentPath still advertises removed public behavior: $forbiddenPublicFragment"
         }
     }
+
+    if ($document.IndexOf('UsageIndicatorForCodex.exe --background', [StringComparison]::Ordinal) -ge 0 -and
+        -not [regex]::IsMatch($document, 'internal\s+upgrade compatibility', [Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+        throw "$documentPath mentions the historical launcher action outside an explicitly labelled migration or cleanup context."
+    }
 }
 
 $appServerSource = Get-Content -LiteralPath (
@@ -288,6 +301,46 @@ foreach ($forbiddenReleaseFragment in @(
         throw "Release asset script still requires a portable artifact: $forbiddenReleaseFragment"
     }
 }
+$launcherBuildScript = Get-Content -LiteralPath (
+    Join-Path $repositoryRoot 'scripts\build-launcher.ps1') -Raw
+foreach ($forbiddenLauncherBuildFragment in @(
+    'ValidateSet(''Portable'', ''Installed'')',
+    '$Layout',
+    '-Layout',
+    'LAUNCHER_REJECT_UPDATE'
+)) {
+    if ($launcherBuildScript.IndexOf($forbiddenLauncherBuildFragment, [StringComparison]::Ordinal) -ge 0) {
+        throw "Installed launcher build still has a portable layout branch: $forbiddenLauncherBuildFragment"
+    }
+}
+foreach ($requiredLauncherBuildFragment in @(
+    "'usage-indicator.exe'",
+    'Launcher output filename must be usage-indicator.exe'
+)) {
+    if ($launcherBuildScript.IndexOf($requiredLauncherBuildFragment, [StringComparison]::Ordinal) -lt 0) {
+        throw "Installed launcher build is missing required behavior: $requiredLauncherBuildFragment"
+    }
+}
+$launcherSource = Get-Content -LiteralPath (
+    Join-Path $repositoryRoot 'src\UsageIndicatorForCodex.Launcher\launcher.c') -Raw
+foreach ($forbiddenLauncherSourceFragment in @(
+    'LAUNCHER_REJECT_UPDATE',
+    'PortableUpdateErrorMessage',
+    'Portable updates are not supported'
+)) {
+    if ($launcherSource.IndexOf($forbiddenLauncherSourceFragment, [StringComparison]::Ordinal) -ge 0) {
+        throw "Native launcher still has portable behavior: $forbiddenLauncherSourceFragment"
+    }
+}
+foreach ($requiredLauncherSourceFragment in @(
+    '..\\app\\UsageIndicatorForCodex.Gui.exe',
+    'DefaultArgument[] = L"help"',
+    'AsyncArgument[] = L"start"'
+)) {
+    if ($launcherSource.IndexOf($requiredLauncherSourceFragment, [StringComparison]::Ordinal) -lt 0) {
+        throw "Native launcher is missing installed-only behavior: $requiredLauncherSourceFragment"
+    }
+}
 
 $ciWorkflow = Get-Content -LiteralPath (
     Join-Path $repositoryRoot '.github\workflows\ci.yml') -Raw
@@ -316,15 +369,29 @@ $workflowContracts = [ordered]@{
 $workflowPins = [Collections.Generic.List[string]]::new()
 foreach ($workflowEntry in $workflowContracts.GetEnumerator()) {
     foreach ($forbiddenWorkflowFragment in @(
+        '-Layout Installed',
         '-Layout Portable',
         'PortableArchivePath',
         'PortableAssetName',
-        'package-release.ps1'
+        'package-release.ps1',
+        'Compress-Archive',
+        '.zip'
     )) {
         if ($workflowEntry.Value.IndexOf(
             $forbiddenWorkflowFragment,
             [StringComparison]::Ordinal) -ge 0) {
             throw "$($workflowEntry.Key) still publishes or packages a portable artifact: $forbiddenWorkflowFragment"
+        }
+    }
+
+    foreach ($requiredLauncherContractFragment in @(
+        '- name: Validate installed launcher contract',
+        '.\tests\installed-launcher-contract.ps1',
+        '-InstalledLauncher (Join-Path $env:RUNNER_TEMP ''usage-indicator.exe'')',
+        '-LauncherProbe .\tests\UsageIndicatorForCodex.LauncherProbe\bin\Release\net8.0\UsageIndicatorForCodex.LauncherProbe.exe'
+    )) {
+        if ($workflowEntry.Value.IndexOf($requiredLauncherContractFragment, [StringComparison]::Ordinal) -lt 0) {
+            throw "$($workflowEntry.Key) is missing installed launcher contract coverage: $requiredLauncherContractFragment"
         }
     }
 

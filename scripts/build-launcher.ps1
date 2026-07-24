@@ -5,9 +5,6 @@ param(
 
     [string]$IntermediateDirectory,
 
-    [ValidateSet('Portable', 'Installed')]
-    [string]$Layout = 'Portable',
-
     [string]$ProductVersion
 )
 
@@ -135,14 +132,9 @@ try {
     $resolvedOutputParent = (Resolve-Path -LiteralPath $resolvedOutputParent).Path
     $resolvedOutput = Join-Path $resolvedOutputParent (Split-Path -Leaf $OutputPath)
     $fileName = Split-Path -Leaf $resolvedOutput
-    $guiRelativePath = if ($Layout -ceq 'Installed') {
-        '..\\app\\UsageIndicatorForCodex.Gui.exe'
-    } else {
-        'UsageIndicatorForCodex.Gui.exe'
+    if ($fileName -cne 'usage-indicator.exe') {
+        throw "Launcher output filename must be usage-indicator.exe, not $fileName."
     }
-    $defaultArgument = if ($Layout -ceq 'Installed') { 'help' } else { '' }
-    $asyncArgument = if ($Layout -ceq 'Installed') { 'start' } else { '--background' }
-    $rejectUpdate = if ($Layout -ceq 'Portable') { 1 } else { 0 }
 
     Invoke-NativeBuildTool $libraryManager @(
         '/nologo',
@@ -171,10 +163,6 @@ try {
         '/W4',
         '/WX',
         '/O1',
-        "/DLAUNCHER_GUI_RELATIVE_PATH=L\`"$guiRelativePath\`"",
-        "/DLAUNCHER_DEFAULT_ARGUMENT=L\`"$defaultArgument\`"",
-        "/DLAUNCHER_ASYNC_ARGUMENT=L\`"$asyncArgument\`"",
-        "/DLAUNCHER_REJECT_UPDATE=$rejectUpdate",
         (Join-Path $sourceDirectory 'launcher.c'),
         "/Fo$objectPath"
     )

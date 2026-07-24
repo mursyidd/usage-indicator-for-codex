@@ -20,22 +20,6 @@
 #define SW_HIDE 0
 #define HEAP_ZERO_MEMORY 0x00000008UL
 
-#ifndef LAUNCHER_GUI_RELATIVE_PATH
-#define LAUNCHER_GUI_RELATIVE_PATH L"UsageIndicatorForCodex.Gui.exe"
-#endif
-
-#ifndef LAUNCHER_DEFAULT_ARGUMENT
-#define LAUNCHER_DEFAULT_ARGUMENT L""
-#endif
-
-#ifndef LAUNCHER_ASYNC_ARGUMENT
-#define LAUNCHER_ASYNC_ARGUMENT L"--background"
-#endif
-
-#ifndef LAUNCHER_REJECT_UPDATE
-#define LAUNCHER_REJECT_UPDATE 1
-#endif
-
 typedef unsigned short WORD;
 typedef unsigned long DWORD;
 typedef int BOOL;
@@ -127,16 +111,12 @@ __declspec(dllimport) BOOL WINAPI WriteFile(
     DWORD *bytesWritten,
     void *overlapped);
 
-static const WCHAR GuiRelativePath[] = LAUNCHER_GUI_RELATIVE_PATH;
-static const WCHAR DefaultArgument[] = LAUNCHER_DEFAULT_ARGUMENT;
-static const WCHAR AsyncArgument[] = LAUNCHER_ASYNC_ARGUMENT;
+static const WCHAR GuiRelativePath[] = L"..\\app\\UsageIndicatorForCodex.Gui.exe";
+static const WCHAR DefaultArgument[] = L"help";
+static const WCHAR AsyncArgument[] = L"start";
 static const WCHAR NullDeviceName[] = L"NUL";
 static const char LaunchFailureMessage[] =
-    "UsageIndicatorForCodex.exe could not start UsageIndicatorForCodex.Gui.exe.\r\n";
-#if LAUNCHER_REJECT_UPDATE
-static const char PortableUpdateErrorMessage[] =
-    "Portable updates are not supported. Download and run the installer, or replace the complete portable directory manually.\r\n";
-#endif
+    "usage-indicator.exe could not start UsageIndicatorForCodex.Gui.exe.\r\n";
 
 static SIZE_T StringLength(LPCWSTR value)
 {
@@ -349,23 +329,6 @@ static void WriteLaunchFailure(void)
     }
 }
 
-#if LAUNCHER_REJECT_UPDATE
-static void WritePortableUpdateError(void)
-{
-    HANDLE errorHandle = GetStdHandle(STD_ERROR_HANDLE);
-    DWORD ignored;
-    if (errorHandle != NULL)
-    {
-        WriteFile(
-            errorHandle,
-            PortableUpdateErrorMessage,
-            (DWORD)(sizeof(PortableUpdateErrorMessage) - 1),
-            &ignored,
-            NULL);
-    }
-}
-#endif
-
 static void HideNewConsoleForDesktopLaunch(void)
 {
     DWORD processIds[2];
@@ -517,15 +480,6 @@ void WINAPI LauncherEntry(void)
         ExitProcess(1);
     }
 
-#if LAUNCHER_REJECT_UPDATE
-    if (argumentCount == 2 && StringsEqual(arguments[1], L"update"))
-    {
-        WritePortableUpdateError();
-        LocalFree(arguments);
-        ExitProcess(2);
-    }
-#endif
-
     launcherPath = GetLauncherPath(heap);
     guiPath = launcherPath == NULL ? NULL : GetGuiPath(heap, launcherPath);
     commandLine = guiPath == NULL
@@ -537,8 +491,7 @@ void WINAPI LauncherEntry(void)
         ExitProcess(1);
     }
 
-    asynchronous = (argumentCount == 1 && DefaultArgument[0] == L'\0')
-        || (argumentCount == 2 && StringsEqual(arguments[1], AsyncArgument));
+    asynchronous = argumentCount == 2 && StringsEqual(arguments[1], AsyncArgument);
     if (asynchronous)
     {
         HideNewConsoleForDesktopLaunch();

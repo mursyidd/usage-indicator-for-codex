@@ -75,7 +75,5 @@ function Get-UsageIndicatorProductMetadata {
         RepositoryUrl = $resolvedRepositoryUrl
         InstallerAssetName = "UsageIndicatorForCodex-Setup-v$version.exe"
         InstallerChecksumAssetName = "UsageIndicatorForCodex-Setup-v$version.exe.sha256"
-        PortableAssetName = "usage-indicator-for-codex-v$version-win-x64.zip"
-        PortableChecksumAssetName = "usage-indicator-for-codex-v$version-win-x64.zip.sha256"
     }
 }

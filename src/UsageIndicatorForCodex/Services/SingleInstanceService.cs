@@ -7,8 +7,6 @@ namespace UsageIndicatorForCodex.Services;
 
 internal enum InstanceCommand
 {
-    Toggle,
-    RevalidateCli,
     Exit
 }
 
@@ -17,7 +15,6 @@ internal sealed record InstanceIdentity(string MutexName, string PipeName);
 internal sealed class SingleInstanceService : IDisposable
 {
     private static readonly TimeSpan ConnectionTimeout = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan RevalidationResponseTimeout = TimeSpan.FromSeconds(25);
     private readonly IReadOnlyList<InstanceIdentity> _identities;
     private readonly List<Mutex> _mutexes = [];
     private readonly List<Mutex> _ownedMutexes = [];
@@ -138,7 +135,7 @@ internal sealed class SingleInstanceService : IDisposable
         }
 
         using (client)
-        using (var responseTimeout = new CancellationTokenSource(command == InstanceCommand.RevalidateCli ? RevalidationResponseTimeout : ConnectionTimeout))
+        using (var responseTimeout = new CancellationTokenSource(ConnectionTimeout))
         {
             try
             {
@@ -175,8 +172,7 @@ internal sealed class SingleInstanceService : IDisposable
         return null;
     }
 
-    internal IReadOnlyList<string> GetPipeNamesForCommand(InstanceCommand command) =>
-        command == InstanceCommand.Exit ? [PipeName] : PipeNames;
+    internal IReadOnlyList<string> GetPipeNamesForExit() => [PipeName];
 
     private static IReadOnlyList<InstanceIdentity> CreateIdentities(string userIdentity)
     {

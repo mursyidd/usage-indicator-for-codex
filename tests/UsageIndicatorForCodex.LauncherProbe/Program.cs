@@ -5,8 +5,8 @@ if (args is ["--verify-launcher", var launcherPath])
 {
     try
     {
-        VerifyLauncher(Path.GetFullPath(launcherPath), LauncherLayout.Portable);
-        Console.WriteLine("PASS native launcher argument, exit-code, and asynchronous process contract");
+        VerifyLauncher(Path.GetFullPath(launcherPath));
+        Console.WriteLine("PASS installed native launcher argument, exit-code, and asynchronous process contract");
         return 0;
     }
     catch (Exception exception)
@@ -16,25 +16,12 @@ if (args is ["--verify-launcher", var launcherPath])
     }
 }
 
-if (args is ["--verify-launcher", var layoutName, var installedLauncherPath]
-    && Enum.TryParse<LauncherLayout>(layoutName, ignoreCase: true, out var layout))
+var outputPath = Environment.GetEnvironmentVariable(ProbeEnvironment.Output);
+if (string.IsNullOrWhiteSpace(outputPath))
 {
-    try
-    {
-        VerifyLauncher(Path.GetFullPath(installedLauncherPath), layout);
-        Console.WriteLine(
-            $"PASS {layout} native launcher layout, argument, exit-code, and asynchronous process contract");
-        return 0;
-    }
-    catch (Exception exception)
-    {
-        Console.Error.WriteLine($"FAIL {layout} native launcher contract: {exception.Message}");
-        return 1;
-    }
+    return WriteManagedConsoleResult(args);
 }
 
-var outputPath = Environment.GetEnvironmentVariable(ProbeEnvironment.Output)
-    ?? throw new InvalidOperationException($"{ProbeEnvironment.Output} is required in probe mode.");
 File.WriteAllText(outputPath, JsonSerializer.Serialize(args));
 
 var readyPath = Environment.GetEnvironmentVariable(ProbeEnvironment.Ready);
@@ -55,7 +42,7 @@ return int.TryParse(Environment.GetEnvironmentVariable(ProbeEnvironment.ExitCode
     ? exitCode
     : 0;
 
-static void VerifyLauncher(string launcherPath, LauncherLayout layout)
+static void VerifyLauncher(string launcherPath)
 {
     if (!File.Exists(launcherPath))
     {
@@ -73,46 +60,20 @@ static void VerifyLauncher(string launcherPath, LauncherLayout layout)
 
     try
     {
-        var launcherDirectory = layout == LauncherLayout.Installed
-            ? Path.Combine(testDirectory, "bin")
-            : testDirectory;
-        var guiDirectory = layout == LauncherLayout.Installed
-            ? Path.Combine(testDirectory, "app")
-            : testDirectory;
+        var launcherDirectory = Path.Combine(testDirectory, "bin");
+        var guiDirectory = Path.Combine(testDirectory, "app");
         Directory.CreateDirectory(launcherDirectory);
         Directory.CreateDirectory(guiDirectory);
-        var disposableLauncher = Path.Combine(
-            launcherDirectory,
-            layout == LauncherLayout.Installed
-                ? "usage-indicator.exe"
-                : "UsageIndicatorForCodex.exe");
+        var disposableLauncher = Path.Combine(launcherDirectory, "usage-indicator.exe");
         File.Copy(launcherPath, disposableLauncher);
 
         foreach (var sourcePath in Directory.EnumerateFiles(probeDirectory))
         {
             var fileName = Path.GetFileName(sourcePath);
-            var destinationName = string.Equals(sourcePath, probePath, StringComparison.OrdinalIgnoreCase)
-                ? "UsageIndicatorForCodex.Gui.exe"
-                : fileName;
-            File.Copy(sourcePath, Path.Combine(guiDirectory, destinationName));
+            File.Copy(sourcePath, Path.Combine(guiDirectory, fileName));
         }
+        File.Copy(probePath, Path.Combine(guiDirectory, "UsageIndicatorForCodex.Gui.exe"), overwrite: true);
 
-        var portableCases = new[]
-        {
-            new[] { "--help" },
-            new[] { "--install" },
-            new[] { "--uninstall" },
-            new[] { "--toggle" },
-            new[] { "--revalidate-cli" },
-            new[] { "--exit" },
-            new[] { @"C:\path with spaces\item.txt" },
-            new[] { "literal\"quote" },
-            new[] { string.Empty },
-            new[] { @"trailing-backslash\" },
-            new[] { "--help", string.Empty },
-            new[] { "--toggle", "--exit" },
-            new[] { "\"malformed" }
-        };
         var installedCases = new[]
         {
             new[] { "stop" },
@@ -124,64 +85,25 @@ static void VerifyLauncher(string launcherPath, LauncherLayout layout)
             new[] { "disable-startup" },
             new[] { "help" },
             new[] { "help", "status" },
-            new[] { "--unknown" }
+            new[] { "--unknown" },
+            new[] { @"C:\path with spaces\item.txt" },
+            new[] { "literal\"quote" },
+            new[] { string.Empty },
+            new[] { @"trailing-backslash\" },
+            new[] { "\"malformed" }
         };
 
-        foreach (var expectedArguments in layout == LauncherLayout.Installed
-            ? installedCases
-            : portableCases)
+        foreach (var expectedArguments in installedCases)
         {
             VerifySynchronousCase(disposableLauncher, testDirectory, expectedArguments);
         }
 
-        if (layout == LauncherLayout.Installed)
-        {
-            VerifySynchronousCase(disposableLauncher, testDirectory, ["help"], []);
-            VerifyAsynchronousCase(disposableLauncher, testDirectory, ["start"]);
-        }
-        else
-        {
-            VerifyRejectedPortableUpdate(disposableLauncher, testDirectory);
-            VerifyAsynchronousCase(disposableLauncher, testDirectory, []);
-            VerifyAsynchronousCase(disposableLauncher, testDirectory, ["--background"]);
-        }
+        VerifySynchronousCase(disposableLauncher, testDirectory, ["help"], []);
+        VerifyAsynchronousCase(disposableLauncher, testDirectory, ["start"]);
     }
     finally
     {
         Directory.Delete(testDirectory, recursive: true);
-    }
-}
-
-static void VerifyRejectedPortableUpdate(
-    string launcherPath,
-    string testDirectory)
-{
-    var outputPath = Path.Combine(testDirectory, $"arguments-{Guid.NewGuid():N}.json");
-    var startInfo = new ProcessStartInfo
-    {
-        FileName = launcherPath,
-        UseShellExecute = false,
-        RedirectStandardError = true
-    };
-    startInfo.ArgumentList.Add("update");
-    startInfo.Environment[ProbeEnvironment.Output] = outputPath;
-    using var process = Process.Start(startInfo)
-        ?? throw new InvalidOperationException("Portable update rejection could not be started.");
-    var standardError = process.StandardError.ReadToEnd();
-    if (!process.WaitForExit(10_000))
-    {
-        TryTerminate(process);
-        throw new TimeoutException("Portable update rejection did not exit.");
-    }
-
-    const string expectedMessage =
-        "Portable updates are not supported. Download and run the installer, or replace the complete portable directory manually.";
-    if (process.ExitCode != 2
-        || !string.Equals(standardError.Trim(), expectedMessage, StringComparison.Ordinal)
-        || File.Exists(outputPath))
-    {
-        throw new InvalidOperationException(
-            $"Portable update rejection returned {process.ExitCode}: {standardError.Trim()}");
     }
 }
 
@@ -374,16 +296,42 @@ static void TryTerminate(Process process)
 static string Format(IEnumerable<string> arguments) =>
     JsonSerializer.Serialize(arguments);
 
+static int WriteManagedConsoleResult(IReadOnlyList<string> arguments)
+{
+    const string usage = """
+        Usage Indicator for Codex
+
+        Commands:
+          usage-indicator start
+          usage-indicator stop
+          usage-indicator status
+          usage-indicator version
+          usage-indicator check-update
+          usage-indicator update
+          usage-indicator enable-startup
+          usage-indicator disable-startup
+          usage-indicator help
+
+        Running usage-indicator without arguments shows this help.
+        """;
+
+    if (arguments.Count == 1 && arguments[0] == "help")
+    {
+        Console.Out.WriteLine(usage);
+        return 0;
+    }
+
+    var error = arguments.Count == 1
+        ? $"Unknown argument: {arguments[0]}"
+        : "Exactly one command may be specified.";
+    Console.Error.WriteLine($"{error}{Environment.NewLine}{Environment.NewLine}{usage}");
+    return 2;
+}
+
 internal static class ProbeEnvironment
 {
     internal const string Output = "USAGE_INDICATOR_LAUNCHER_PROBE_OUTPUT";
     internal const string ExitCode = "USAGE_INDICATOR_LAUNCHER_PROBE_EXIT_CODE";
     internal const string Ready = "USAGE_INDICATOR_LAUNCHER_PROBE_READY";
     internal const string HoldMilliseconds = "USAGE_INDICATOR_LAUNCHER_PROBE_HOLD_MS";
-}
-
-internal enum LauncherLayout
-{
-    Portable,
-    Installed
 }
