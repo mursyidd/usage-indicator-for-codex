@@ -11,11 +11,28 @@ internal enum StartupTaskState
     Unrecognized
 }
 
+internal enum StartupTaskRegistrationMode
+{
+    Create,
+    Update
+}
+
+internal sealed class StartupTaskOwnershipException : InvalidOperationException
+{
+    internal StartupTaskOwnershipException(string message)
+        : base(message)
+    {
+    }
+
+    internal int ExitCode => StartupTaskManager.OwnershipCollisionExitCode;
+}
+
 public static class StartupTaskManager
 {
     internal const string TaskName = "UsageIndicatorForCodex";
     internal const string LegacyTaskName = "CodexUsageIndicator";
     internal const string LegacyExecutableName = "CodexUsageIndicator.exe";
+    internal const int OwnershipCollisionExitCode = 2;
     private const string BackgroundArgument = "--background";
 
     internal static bool IsInstallationEnabled => true;
@@ -27,8 +44,20 @@ public static class StartupTaskManager
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
         ArgumentNullException.ThrowIfNull(scheduler);
-        scheduler.Register(TaskName, executablePath, CreateConfigurationForCurrentUser());
-        DeleteLegacyTaskIfRecognized(scheduler);
+        var inventory = ReadInventory(executablePath, scheduler);
+        ThrowIfUnrecognizedForEnable(inventory);
+
+        scheduler.Register(
+            TaskName,
+            executablePath,
+            CreateConfigurationForCurrentUser(),
+            inventory.CanonicalOwnership == StartupTaskOwnership.Absent
+                ? StartupTaskRegistrationMode.Create
+                : StartupTaskRegistrationMode.Update);
+        if (inventory.LegacyOwnership == StartupTaskOwnership.Recognized)
+        {
+            DeleteIgnoringMissing(scheduler, LegacyTaskName);
+        }
     }
 
     internal static bool TryMigrateLegacyTask(string executablePath)
@@ -47,12 +76,20 @@ public static class StartupTaskManager
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
         ArgumentNullException.ThrowIfNull(scheduler);
-        if (!IsRecognizedLegacyTask(TryGetLegacyTask(scheduler)))
+        var inventory = ReadInventory(executablePath, scheduler);
+        if (inventory.UnrecognizedNames.Count > 0
+            || inventory.LegacyOwnership != StartupTaskOwnership.Recognized)
         {
             return false;
         }
 
-        scheduler.Register(TaskName, executablePath, CreateConfigurationForCurrentUser());
+        scheduler.Register(
+            TaskName,
+            executablePath,
+            CreateConfigurationForCurrentUser(),
+            inventory.CanonicalOwnership == StartupTaskOwnership.Absent
+                ? StartupTaskRegistrationMode.Create
+                : StartupTaskRegistrationMode.Update);
         DeleteIgnoringMissing(scheduler, LegacyTaskName);
         return true;
     }
@@ -72,21 +109,13 @@ public static class StartupTaskManager
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
         ArgumentNullException.ThrowIfNull(scheduler);
-        var expectedPath = NormalizeExecutablePath(executablePath)
-            ?? throw new ArgumentException(
-                "The startup executable path must be fully qualified.",
-                nameof(executablePath));
-        var canonical = scheduler.Get(TaskName);
-        var legacy = scheduler.Get(LegacyTaskName);
-        var canonicalRecognized = canonical is null
-            || IsRecognizedCanonicalTask(canonical, expectedPath);
-        var legacyRecognized = legacy is null || IsRecognizedLegacyTask(legacy);
-        if (!canonicalRecognized || !legacyRecognized)
+        var inventory = ReadInventory(executablePath, scheduler);
+        if (inventory.UnrecognizedNames.Count > 0)
         {
             return StartupTaskState.Unrecognized;
         }
 
-        if (canonical?.IsEnabled == true || legacy?.IsEnabled == true)
+        if (inventory.Canonical?.IsEnabled == true || inventory.Legacy?.IsEnabled == true)
         {
             return StartupTaskState.Enabled;
         }
@@ -94,28 +123,39 @@ public static class StartupTaskManager
         return StartupTaskState.Disabled;
     }
 
-    public static void Uninstall() => Uninstall(new ComStartupTaskScheduler());
+    public static void Uninstall(string executablePath) =>
+        Uninstall(executablePath, new ComStartupTaskScheduler());
 
-    internal static void Uninstall(IStartupTaskScheduler scheduler)
+    internal static void Uninstall(
+        string executablePath,
+        IStartupTaskScheduler scheduler)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
         ArgumentNullException.ThrowIfNull(scheduler);
+        var inventory = ReadInventory(executablePath, scheduler);
         var failures = new List<Exception>();
-        try
+        if (inventory.CanonicalOwnership == StartupTaskOwnership.Recognized)
         {
-            DeleteIgnoringMissing(scheduler, TaskName);
-        }
-        catch (Exception exception)
-        {
-            failures.Add(exception);
+            try
+            {
+                DeleteIgnoringMissing(scheduler, TaskName);
+            }
+            catch (Exception exception)
+            {
+                failures.Add(exception);
+            }
         }
 
-        try
+        if (inventory.LegacyOwnership == StartupTaskOwnership.Recognized)
         {
-            DeleteLegacyTaskIfRecognized(scheduler);
-        }
-        catch (Exception exception)
-        {
-            failures.Add(exception);
+            try
+            {
+                DeleteIgnoringMissing(scheduler, LegacyTaskName);
+            }
+            catch (Exception exception)
+            {
+                failures.Add(exception);
+            }
         }
 
         if (failures.Count == 1)
@@ -126,6 +166,14 @@ public static class StartupTaskManager
         if (failures.Count > 1)
         {
             throw new AggregateException("Automatic startup tasks could not be removed.", failures);
+        }
+
+        if (inventory.UnrecognizedNames.Count > 0)
+        {
+            throw new StartupTaskOwnershipException(
+                "Startup cleanup preserved unrecognized scheduled task names that must be inspected manually: "
+                + string.Join(", ", inventory.UnrecognizedNames)
+                + ".");
         }
     }
 
@@ -200,24 +248,45 @@ public static class StartupTaskManager
         }
     }
 
-    private static void DeleteLegacyTaskIfRecognized(IStartupTaskScheduler scheduler)
+    private static StartupTaskInventory ReadInventory(
+        string executablePath,
+        IStartupTaskScheduler scheduler)
     {
-        if (IsRecognizedLegacyTask(TryGetLegacyTask(scheduler)))
-        {
-            DeleteIgnoringMissing(scheduler, LegacyTaskName);
-        }
+        var expectedPath = NormalizeExecutablePath(executablePath)
+            ?? throw new ArgumentException(
+                "The startup executable path must be fully qualified.",
+                nameof(executablePath));
+        var canonical = scheduler.Get(TaskName);
+        var legacy = scheduler.Get(LegacyTaskName);
+        return new StartupTaskInventory(
+            canonical,
+            legacy,
+            Classify(canonical, task => IsRecognizedCanonicalTask(task, expectedPath)),
+            Classify(legacy, IsRecognizedLegacyTask));
     }
 
-    private static StartupTaskInfo? TryGetLegacyTask(IStartupTaskScheduler scheduler)
+    private static StartupTaskOwnership Classify(
+        StartupTaskInfo? task,
+        Func<StartupTaskInfo?, bool> isRecognized)
     {
-        try
+        if (task is null)
         {
-            return scheduler.Get(LegacyTaskName);
+            return StartupTaskOwnership.Absent;
         }
-        catch
+
+        return isRecognized(task)
+            ? StartupTaskOwnership.Recognized
+            : StartupTaskOwnership.Unrecognized;
+    }
+
+    private static void ThrowIfUnrecognizedForEnable(StartupTaskInventory inventory)
+    {
+        if (inventory.UnrecognizedNames.Count > 0)
         {
-            // If ownership cannot be confirmed, preserve the task and continue.
-            return null;
+            throw new StartupTaskOwnershipException(
+                "Startup was not enabled because unrecognized scheduled task names must be inspected manually: "
+                + string.Join(", ", inventory.UnrecognizedNames)
+                + ".");
         }
     }
 
@@ -234,10 +303,45 @@ public static class StartupTaskManager
     }
 }
 
+internal enum StartupTaskOwnership
+{
+    Absent,
+    Recognized,
+    Unrecognized
+}
+
+internal sealed record StartupTaskInventory(
+    StartupTaskInfo? Canonical,
+    StartupTaskInfo? Legacy,
+    StartupTaskOwnership CanonicalOwnership,
+    StartupTaskOwnership LegacyOwnership)
+{
+    internal IReadOnlyList<string> UnrecognizedNames
+    {
+        get
+        {
+            var names = new List<string>(2);
+            if (CanonicalOwnership == StartupTaskOwnership.Unrecognized)
+            {
+                names.Add(StartupTaskManager.TaskName);
+            }
+            if (LegacyOwnership == StartupTaskOwnership.Unrecognized)
+            {
+                names.Add(StartupTaskManager.LegacyTaskName);
+            }
+            return names;
+        }
+    }
+}
+
 internal interface IStartupTaskScheduler
 {
     StartupTaskInfo? Get(string taskName);
-    void Register(string taskName, string executablePath, StartupTaskConfiguration configuration);
+    void Register(
+        string taskName,
+        string executablePath,
+        StartupTaskConfiguration configuration,
+        StartupTaskRegistrationMode mode);
     void Delete(string taskName);
 }
 
@@ -292,7 +396,8 @@ internal sealed class ComStartupTaskScheduler : IStartupTaskScheduler
     public void Register(
         string taskName,
         string executablePath,
-        StartupTaskConfiguration configuration)
+        StartupTaskConfiguration configuration,
+        StartupTaskRegistrationMode mode)
     {
         dynamic definition = _service.NewTask(0);
         definition.RegistrationInfo.Description = "Shows the Usage Indicator for Codex companion.";
@@ -318,11 +423,11 @@ internal sealed class ComStartupTaskScheduler : IStartupTaskScheduler
         _root.RegisterTaskDefinition(
             taskName,
             definition,
-            6,
+            mode == StartupTaskRegistrationMode.Create ? 2 : 4,
             configuration.UserId,
             null,
             3,
-            null); // create-or-update, interactive token
+            null); // create or update only after ownership inspection
     }
 
     public void Delete(string taskName) => _root.DeleteTask(taskName, 0);

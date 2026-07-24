@@ -18,7 +18,6 @@ $requiredFragments = @(
     'VersionInfoVersion={#ProductVersion}.0',
     'Source: "{#PublishDirectory}\*"; DestDir: "{app}\app"; Excludes: "UsageIndicatorForCodex.exe"',
     'Source: "{#InstalledLauncher}"; DestDir: "{app}\bin"; DestName: "usage-indicator.exe"',
-    'Filename: "{app}\bin\usage-indicator.exe"; Parameters: "disable-startup"',
     'ChangesEnvironment=yes',
     'CloseApplications=yes',
     'RestartApplications=no',
@@ -51,8 +50,17 @@ $requiredFragments = @(
     '''startup: unrecognized''',
     'StartupInitialChecked',
     'StartupPreferenceKnown',
+    'StartupCollisionDetected',
     'StartupUserChanged',
+    'StartupCheckBox.Enabled := not StartupCollisionDetected',
+    'StartupCollisionMessage.Visible := StartupCollisionDetected',
+    'A same-name unrecognized Windows startup task must be inspected manually.',
+    'if StartupCollisionDetected then',
     'ApplyStartupPreference',
+    'RunStartupCleanupForUninstall',
+    'LogStartupCommandOutput(''Startup cleanup'', Output)',
+    'else if ResultCode = 2 then',
+    'Foreign same-name startup tasks were preserved for manual inspection.',
     '''enable-startup''',
     '''disable-startup'''
 )
@@ -66,6 +74,7 @@ foreach ($prohibitedFragment in @(
     'PrivilegesRequired=admin',
     'PrivilegesRequired=poweruser',
     'runascurrentuser',
+    '[UninstallRun]',
     '/SILENT',
     '/VERYSILENT',
     'uninsdeletevalue',
@@ -162,9 +171,13 @@ function Get-StartupMutationModel {
         [bool]$PreferenceKnown,
         [bool]$InitialChecked,
         [bool]$CurrentChecked,
-        [bool]$UserChanged
+        [bool]$UserChanged,
+        [bool]$CollisionDetected = $false
     )
 
+    if ($CollisionDetected) {
+        return 'none'
+    }
     if (-not $UserChanged) {
         return 'none'
     }
@@ -240,6 +253,16 @@ if ((Get-StartupMutationModel $false $false $true $true) -cne 'enable-startup') 
 }
 if ((Get-StartupMutationModel $false $false $false $true) -cne 'disable-startup') {
     throw 'An explicit opt-out from unknown state must disable startup.'
+}
+if ((Read-StartupStatusModel -StdOut @(
+        'running: false',
+        'indicator-enabled: true',
+        'startup: unrecognized')) -cne 'unrecognized') {
+    throw 'Installer status model must retain an exact unrecognized collision state.'
+}
+if ((Get-StartupMutationModel $false $false $true $true $true) -cne 'none' -or
+    (Get-StartupMutationModel $false $false $false $true $true) -cne 'none') {
+    throw 'An unrecognized startup collision must disable all installer startup mutation.'
 }
 
 if (-not [string]::IsNullOrWhiteSpace($InstallerPath)) {

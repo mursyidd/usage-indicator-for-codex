@@ -58,9 +58,6 @@ Name: "{group}\Uninstall Usage Indicator for Codex"; Filename: "{uninstallexe}"
 [Run]
 Filename: "{app}\app\{#ProductExecutable}"; Description: "Start Usage Indicator for Codex"; Flags: nowait postinstall skipifsilent
 
-[UninstallRun]
-Filename: "{app}\bin\usage-indicator.exe"; Parameters: "disable-startup"; RunOnceId: "DisableOwnedStartup"; Flags: runhidden waituntilterminated skipifdoesntexist
-
 [Code]
 const
   EnvironmentKey = 'Environment';
@@ -70,10 +67,12 @@ const
 var
   StartupPage: TWizardPage;
   StartupCheckBox: TNewCheckBox;
+  StartupCollisionMessage: TNewStaticText;
   StartupPageInitialized: Boolean;
   StartupInitializing: Boolean;
   StartupInitialChecked: Boolean;
   StartupPreferenceKnown: Boolean;
+  StartupCollisionDetected: Boolean;
   StartupUserChanged: Boolean;
 
 procedure StartupCheckBoxClick(Sender: TObject);
@@ -96,6 +95,19 @@ begin
   StartupCheckBox.Width := StartupPage.SurfaceWidth;
   StartupCheckBox.Checked := False;
   StartupCheckBox.OnClick := @StartupCheckBoxClick;
+
+  StartupCollisionMessage := TNewStaticText.Create(StartupPage.Surface);
+  StartupCollisionMessage.Parent := StartupPage.Surface;
+  StartupCollisionMessage.Caption :=
+    'A same-name unrecognized Windows startup task must be inspected manually. ' +
+    'Setup will preserve it unchanged.';
+  StartupCollisionMessage.Left := 0;
+  StartupCollisionMessage.Top := StartupCheckBox.Top + StartupCheckBox.Height + ScaleY(8);
+  StartupCollisionMessage.Width := StartupPage.SurfaceWidth;
+  StartupCollisionMessage.AutoSize := False;
+  StartupCollisionMessage.WordWrap := True;
+  StartupCollisionMessage.Height := ScaleY(42);
+  StartupCollisionMessage.Visible := False;
 end;
 
 function IsBooleanStatusRecord(const Value, Name: string): Boolean;
@@ -106,7 +118,7 @@ begin
 end;
 
 function TryInspectExistingStartup(
-  var PreferenceKnown, StartupEnabled: Boolean): Boolean;
+  var PreferenceKnown, StartupEnabled, CollisionDetected: Boolean): Boolean;
 var
   CliPath: string;
   ResultCode: Integer;
@@ -116,6 +128,7 @@ begin
   Result := False;
   PreferenceKnown := False;
   StartupEnabled := False;
+  CollisionDetected := False;
   CliPath := ExpandConstant('{app}\bin\usage-indicator.exe');
   if not FileExists(CliPath) then
     Exit;
@@ -164,6 +177,10 @@ begin
   begin
     PreferenceKnown := True;
     StartupEnabled := False;
+  end
+  else
+  begin
+    CollisionDetected := True;
   end;
 end;
 
@@ -175,13 +192,18 @@ begin
     Exit;
 
   StartupPageInitialized := True;
-  TryInspectExistingStartup(StartupPreferenceKnown, StartupEnabled);
+  TryInspectExistingStartup(
+    StartupPreferenceKnown,
+    StartupEnabled,
+    StartupCollisionDetected);
   StartupInitializing := True;
   if StartupPreferenceKnown then
     StartupCheckBox.Checked := StartupEnabled
   else
     StartupCheckBox.Checked := False;
   StartupInitialChecked := StartupCheckBox.Checked;
+  StartupCheckBox.Enabled := not StartupCollisionDetected;
+  StartupCollisionMessage.Visible := StartupCollisionDetected;
   StartupUserChanged := False;
   StartupInitializing := False;
 end;
@@ -223,6 +245,9 @@ end;
 
 procedure ApplyStartupPreference;
 begin
+  if StartupCollisionDetected then
+    Exit;
+
   if not StartupUserChanged then
     Exit;
 
@@ -234,6 +259,57 @@ begin
     RunStartupCommand('enable-startup')
   else
     RunStartupCommand('disable-startup');
+end;
+
+procedure LogStartupCommandOutput(const Prefix: string; Output: TExecOutput);
+var
+  Index: Integer;
+begin
+  for Index := 0 to GetArrayLength(Output.StdOut) - 1 do
+    Log(Prefix + ' stdout: ' + Output.StdOut[Index]);
+  for Index := 0 to GetArrayLength(Output.StdErr) - 1 do
+    Log(Prefix + ' stderr: ' + Output.StdErr[Index]);
+end;
+
+procedure RunStartupCleanupForUninstall;
+var
+  CliPath: string;
+  ResultCode: Integer;
+  Output: TExecOutput;
+  LaunchSucceeded: Boolean;
+begin
+  CliPath := ExpandConstant('{app}\bin\usage-indicator.exe');
+  if not FileExists(CliPath) then
+  begin
+    Log('Startup cleanup skipped because the installed command is unavailable.');
+    Exit;
+  end;
+
+  try
+    LaunchSucceeded := ExecAndCaptureOutput(
+      CliPath,
+      'disable-startup',
+      '',
+      SW_HIDE,
+      ewWaitUntilTerminated,
+      ResultCode,
+      Output);
+    LogStartupCommandOutput('Startup cleanup', Output);
+    if (not LaunchSucceeded) or Output.Error then
+      Log('Startup cleanup could not be captured; uninstall will continue.')
+    else if ResultCode = 0 then
+      Log('Recognized application-owned startup tasks were removed.')
+    else if ResultCode = 2 then
+      Log('Foreign same-name startup tasks were preserved for manual inspection.')
+    else
+      Log(
+        'Startup cleanup exited with code ' + IntToStr(ResultCode) +
+        '; uninstall will continue.');
+  except
+    Log(
+      'Startup cleanup failed; uninstall will continue. ' +
+      GetExceptionMessage);
+  end;
 end;
 
 function NormalizePathEntry(Value: string): string;
@@ -376,5 +452,8 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
+  begin
+    RunStartupCleanupForUninstall;
     RemoveOwnedBinFromPath;
+  end;
 end;

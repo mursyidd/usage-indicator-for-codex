@@ -40,6 +40,11 @@ public partial class App : System.Windows.Application
                 CommandLineOutput.Show("Startup enabled.", isError: false);
                 Shutdown(0);
             }
+            catch (StartupTaskOwnershipException exception)
+            {
+                CommandLineOutput.Show(exception.Message, isError: true);
+                Shutdown(exception.ExitCode);
+            }
             catch (Exception exception)
             {
                 CommandLineOutput.Show(
@@ -54,9 +59,14 @@ public partial class App : System.Windows.Application
         {
             try
             {
-                StartupTaskManager.Uninstall();
+                StartupTaskManager.Uninstall(GetExecutablePath());
                 CommandLineOutput.Show("Startup disabled.", isError: false);
                 Shutdown(0);
+            }
+            catch (StartupTaskOwnershipException exception)
+            {
+                CommandLineOutput.Show(exception.Message, isError: true);
+                Shutdown(exception.ExitCode);
             }
             catch (Exception exception)
             {

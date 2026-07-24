@@ -147,11 +147,17 @@ var checks = new (string Name, Action Run)[]
     ("recognizes canonical and legacy startup states", RecognizesStartupStates),
     ("reports foreign startup task collisions as unrecognized", ReportsStartupCollisionsAsUnrecognized),
     ("does not hide startup scheduler inspection failures", DoesNotHideStartupInspectionFailures),
+    ("rejects startup enable when canonical ownership is unrecognized", RejectsEnableWithForeignCanonicalTask),
+    ("rejects startup enable when legacy ownership is unrecognized", RejectsEnableWithForeignLegacyTask),
+    ("updates only a recognized canonical startup task", UpdatesRecognizedCanonicalStartupTask),
+    ("preserves foreign startup tasks during disable", PreservesForeignTasksDuringDisable),
+    ("removes owned tasks but reports mixed foreign startup collisions", CleansOwnedTasksAndReportsMixedCollisions),
     ("removes recognized legacy startup after registering canonical startup", RemovesRecognizedLegacyStartupAfterRegisteringCanonical),
     ("preserves an unrelated legacy-named startup task", PreservesUnrelatedLegacyNamedStartupTask),
     ("leaves legacy startup when canonical registration fails", LeavesLegacyStartupWhenRegistrationFails),
     ("keeps normal launch fail-open when startup migration cannot resolve a path", KeepsNormalLaunchFailOpenForMigrationFailure),
     ("migrates only recognized legacy startup tasks", MigratesOnlyRecognizedLegacyStartupTasks),
+    ("does not migrate legacy startup across a foreign canonical collision", RejectsMigrationAcrossForeignCanonicalTask),
     ("uninstalls canonical and recognized legacy startup tasks", UninstallsCanonicalAndRecognizedLegacyStartupTasks),
     ("preserves an unrecognized legacy startup task during uninstall", PreservesUnrecognizedLegacyStartupTaskDuringUninstall),
     ("treats missing startup tasks as non-fatal", TreatsMissingStartupTasksAsNonFatal),
@@ -1469,6 +1475,128 @@ static void DoesNotHideStartupInspectionFailures()
             scheduler));
 }
 
+static void RejectsEnableWithForeignCanonicalTask()
+{
+    const string executablePath = @"C:\Apps\UsageIndicatorForCodex.Gui.exe";
+    var scheduler = new RecordingStartupTaskScheduler();
+    var foreign = new StartupTaskInfo(
+        @"C:\Tools\Foreign.exe",
+        "--background",
+        "Foreign task.",
+        true);
+    scheduler.Tasks[StartupTaskManager.TaskName] = foreign;
+
+    var exception = AssertThrowsAndReturn<StartupTaskOwnershipException>(() =>
+        StartupTaskManager.Install(executablePath, scheduler));
+
+    AssertEqual(StartupTaskManager.OwnershipCollisionExitCode, exception.ExitCode);
+    AssertEqual(
+        "Startup was not enabled because unrecognized scheduled task names must be inspected manually: UsageIndicatorForCodex.",
+        exception.Message);
+    AssertEqual(foreign, scheduler.Tasks[StartupTaskManager.TaskName]);
+    AssertEqual(2, scheduler.Operations.Count);
+    AssertEqual($"Get:{StartupTaskManager.TaskName}", scheduler.Operations[0]);
+    AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", scheduler.Operations[1]);
+}
+
+static void RejectsEnableWithForeignLegacyTask()
+{
+    const string executablePath = @"C:\Apps\UsageIndicatorForCodex.Gui.exe";
+    var scheduler = new RecordingStartupTaskScheduler();
+    var recognizedCanonical = new StartupTaskInfo(
+        executablePath,
+        "--background",
+        "Shows the Usage Indicator for Codex companion.",
+        true);
+    var foreignLegacy = new StartupTaskInfo(
+        @"C:\Tools\Foreign.exe",
+        "--background",
+        "Foreign task.",
+        true);
+    scheduler.Tasks[StartupTaskManager.TaskName] = recognizedCanonical;
+    scheduler.Tasks[StartupTaskManager.LegacyTaskName] = foreignLegacy;
+
+    var exception = AssertThrowsAndReturn<StartupTaskOwnershipException>(() =>
+        StartupTaskManager.Install(executablePath, scheduler));
+
+    AssertEqual(StartupTaskManager.OwnershipCollisionExitCode, exception.ExitCode);
+    AssertEqual(recognizedCanonical, scheduler.Tasks[StartupTaskManager.TaskName]);
+    AssertEqual(foreignLegacy, scheduler.Tasks[StartupTaskManager.LegacyTaskName]);
+    AssertEqual(2, scheduler.Operations.Count);
+}
+
+static void UpdatesRecognizedCanonicalStartupTask()
+{
+    const string executablePath = @"C:\Apps\UsageIndicatorForCodex.Gui.exe";
+    var scheduler = new RecordingStartupTaskScheduler();
+    scheduler.Tasks[StartupTaskManager.TaskName] = new StartupTaskInfo(
+        executablePath,
+        "--background",
+        "Shows the Usage Indicator for Codex companion.",
+        false);
+
+    StartupTaskManager.Install(executablePath, scheduler);
+
+    AssertEqual(
+        $"Register:{StartupTaskManager.TaskName}:{StartupTaskRegistrationMode.Update}",
+        scheduler.Operations[2]);
+    AssertEqual(true, scheduler.Tasks[StartupTaskManager.TaskName].IsEnabled);
+}
+
+static void PreservesForeignTasksDuringDisable()
+{
+    const string executablePath = @"C:\Apps\UsageIndicatorForCodex.Gui.exe";
+    foreach (var taskName in new[]
+    {
+        StartupTaskManager.TaskName,
+        StartupTaskManager.LegacyTaskName
+    })
+    {
+        var scheduler = new RecordingStartupTaskScheduler();
+        var foreign = new StartupTaskInfo(
+            @"C:\Tools\Foreign.exe",
+            "--background",
+            "Foreign task.",
+            true);
+        scheduler.Tasks[taskName] = foreign;
+
+        var exception = AssertThrowsAndReturn<StartupTaskOwnershipException>(() =>
+            StartupTaskManager.Uninstall(executablePath, scheduler));
+
+        AssertEqual(StartupTaskManager.OwnershipCollisionExitCode, exception.ExitCode);
+        AssertEqual(foreign, scheduler.Tasks[taskName]);
+        AssertEqual(2, scheduler.Operations.Count);
+        AssertEqual($"Get:{StartupTaskManager.TaskName}", scheduler.Operations[0]);
+        AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", scheduler.Operations[1]);
+    }
+}
+
+static void CleansOwnedTasksAndReportsMixedCollisions()
+{
+    const string executablePath = @"C:\Apps\UsageIndicatorForCodex.Gui.exe";
+    var scheduler = new RecordingStartupTaskScheduler();
+    scheduler.Tasks[StartupTaskManager.TaskName] = new StartupTaskInfo(
+        executablePath,
+        "--background",
+        "Shows the Usage Indicator for Codex companion.");
+    var foreignLegacy = new StartupTaskInfo(
+        @"C:\Tools\Foreign.exe",
+        "--background",
+        "Foreign task.");
+    scheduler.Tasks[StartupTaskManager.LegacyTaskName] = foreignLegacy;
+
+    var exception = AssertThrowsAndReturn<StartupTaskOwnershipException>(() =>
+        StartupTaskManager.Uninstall(executablePath, scheduler));
+
+    AssertEqual(
+        "Startup cleanup preserved unrecognized scheduled task names that must be inspected manually: CodexUsageIndicator.",
+        exception.Message);
+    AssertEqual(false, scheduler.Tasks.ContainsKey(StartupTaskManager.TaskName));
+    AssertEqual(foreignLegacy, scheduler.Tasks[StartupTaskManager.LegacyTaskName]);
+    AssertEqual(true, scheduler.Operations.Contains($"Delete:{StartupTaskManager.TaskName}"));
+    AssertEqual(false, scheduler.Operations.Contains($"Delete:{StartupTaskManager.LegacyTaskName}"));
+}
+
 static void RemovesRecognizedLegacyStartupAfterRegisteringCanonical()
 {
     var scheduler = new RecordingStartupTaskScheduler();
@@ -1479,10 +1607,13 @@ static void RemovesRecognizedLegacyStartupAfterRegisteringCanonical()
 
     StartupTaskManager.Install(@"C:\Apps\UsageIndicatorForCodex.Gui.exe", scheduler);
 
-    AssertEqual(3, scheduler.Operations.Count);
-    AssertEqual($"Register:{StartupTaskManager.TaskName}", scheduler.Operations[0]);
+    AssertEqual(4, scheduler.Operations.Count);
+    AssertEqual($"Get:{StartupTaskManager.TaskName}", scheduler.Operations[0]);
     AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", scheduler.Operations[1]);
-    AssertEqual($"Delete:{StartupTaskManager.LegacyTaskName}", scheduler.Operations[2]);
+    AssertEqual(
+        $"Register:{StartupTaskManager.TaskName}:{StartupTaskRegistrationMode.Create}",
+        scheduler.Operations[2]);
+    AssertEqual($"Delete:{StartupTaskManager.LegacyTaskName}", scheduler.Operations[3]);
     AssertEqual(true, scheduler.Tasks.ContainsKey(StartupTaskManager.TaskName));
     AssertEqual(false, scheduler.Tasks.ContainsKey(StartupTaskManager.LegacyTaskName));
     AssertEqual(@"C:\Apps\UsageIndicatorForCodex.Gui.exe", scheduler.RegisteredExecutablePath!);
@@ -1497,12 +1628,13 @@ static void PreservesUnrelatedLegacyNamedStartupTask()
         "--background",
         "Unrelated maintenance task.");
 
-    StartupTaskManager.Install(@"C:\Apps\UsageIndicatorForCodex.Gui.exe", scheduler);
+    AssertThrows<StartupTaskOwnershipException>(() =>
+        StartupTaskManager.Install(@"C:\Apps\UsageIndicatorForCodex.Gui.exe", scheduler));
 
     AssertEqual(2, scheduler.Operations.Count);
-    AssertEqual($"Register:{StartupTaskManager.TaskName}", scheduler.Operations[0]);
+    AssertEqual($"Get:{StartupTaskManager.TaskName}", scheduler.Operations[0]);
     AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", scheduler.Operations[1]);
-    AssertEqual(true, scheduler.Tasks.ContainsKey(StartupTaskManager.TaskName));
+    AssertEqual(false, scheduler.Tasks.ContainsKey(StartupTaskManager.TaskName));
     AssertEqual(true, scheduler.Tasks.ContainsKey(StartupTaskManager.LegacyTaskName));
 }
 
@@ -1519,8 +1651,12 @@ static void LeavesLegacyStartupWhenRegistrationFails()
 
     AssertThrows<COMException>(() =>
         StartupTaskManager.Install(@"C:\Apps\UsageIndicatorForCodex.Gui.exe", scheduler));
-    AssertEqual(1, scheduler.Operations.Count);
-    AssertEqual($"Register:{StartupTaskManager.TaskName}", scheduler.Operations[0]);
+    AssertEqual(3, scheduler.Operations.Count);
+    AssertEqual($"Get:{StartupTaskManager.TaskName}", scheduler.Operations[0]);
+    AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", scheduler.Operations[1]);
+    AssertEqual(
+        $"Register:{StartupTaskManager.TaskName}:{StartupTaskRegistrationMode.Create}",
+        scheduler.Operations[2]);
     AssertEqual(true, scheduler.Tasks.ContainsKey(StartupTaskManager.LegacyTaskName));
 }
 
@@ -1550,8 +1686,9 @@ static void MigratesOnlyRecognizedLegacyStartupTasks()
     AssertEqual(false, StartupTaskManager.MigrateLegacyTask(
         @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
         noLegacy));
-    AssertEqual(1, noLegacy.Operations.Count);
-    AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", noLegacy.Operations[0]);
+    AssertEqual(2, noLegacy.Operations.Count);
+    AssertEqual($"Get:{StartupTaskManager.TaskName}", noLegacy.Operations[0]);
+    AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", noLegacy.Operations[1]);
 
     var unrelated = new RecordingStartupTaskScheduler();
     unrelated.Tasks[StartupTaskManager.LegacyTaskName] = new StartupTaskInfo(
@@ -1561,8 +1698,9 @@ static void MigratesOnlyRecognizedLegacyStartupTasks()
     AssertEqual(false, StartupTaskManager.MigrateLegacyTask(
         @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
         unrelated));
-    AssertEqual(1, unrelated.Operations.Count);
-    AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", unrelated.Operations[0]);
+    AssertEqual(2, unrelated.Operations.Count);
+    AssertEqual($"Get:{StartupTaskManager.TaskName}", unrelated.Operations[0]);
+    AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", unrelated.Operations[1]);
     AssertEqual(true, unrelated.Tasks.ContainsKey(StartupTaskManager.LegacyTaskName));
 
     var migration = new RecordingStartupTaskScheduler();
@@ -1573,9 +1711,33 @@ static void MigratesOnlyRecognizedLegacyStartupTasks()
     AssertEqual(true, StartupTaskManager.MigrateLegacyTask(
         @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
         migration));
-    AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", migration.Operations[0]);
-    AssertEqual($"Register:{StartupTaskManager.TaskName}", migration.Operations[1]);
-    AssertEqual($"Delete:{StartupTaskManager.LegacyTaskName}", migration.Operations[2]);
+    AssertEqual($"Get:{StartupTaskManager.TaskName}", migration.Operations[0]);
+    AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", migration.Operations[1]);
+    AssertEqual(
+        $"Register:{StartupTaskManager.TaskName}:{StartupTaskRegistrationMode.Create}",
+        migration.Operations[2]);
+    AssertEqual($"Delete:{StartupTaskManager.LegacyTaskName}", migration.Operations[3]);
+}
+
+static void RejectsMigrationAcrossForeignCanonicalTask()
+{
+    const string executablePath = @"C:\Apps\UsageIndicatorForCodex.Gui.exe";
+    var scheduler = new RecordingStartupTaskScheduler();
+    var foreignCanonical = new StartupTaskInfo(
+        @"C:\Tools\Foreign.exe",
+        "--background",
+        "Foreign task.");
+    var recognizedLegacy = new StartupTaskInfo(
+        @"C:\Legacy\CodexUsageIndicator.exe",
+        "--background",
+        "Shows the Codex usage indicator companion.");
+    scheduler.Tasks[StartupTaskManager.TaskName] = foreignCanonical;
+    scheduler.Tasks[StartupTaskManager.LegacyTaskName] = recognizedLegacy;
+
+    AssertEqual(false, StartupTaskManager.MigrateLegacyTask(executablePath, scheduler));
+    AssertEqual(2, scheduler.Operations.Count);
+    AssertEqual(foreignCanonical, scheduler.Tasks[StartupTaskManager.TaskName]);
+    AssertEqual(recognizedLegacy, scheduler.Tasks[StartupTaskManager.LegacyTaskName]);
 }
 
 static void UninstallsCanonicalAndRecognizedLegacyStartupTasks()
@@ -1590,10 +1752,13 @@ static void UninstallsCanonicalAndRecognizedLegacyStartupTasks()
         "--background",
         "Shows the Codex usage indicator companion.");
 
-    StartupTaskManager.Uninstall(uninstall);
-    AssertEqual($"Delete:{StartupTaskManager.TaskName}", uninstall.Operations[0]);
+    StartupTaskManager.Uninstall(
+        @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
+        uninstall);
+    AssertEqual($"Get:{StartupTaskManager.TaskName}", uninstall.Operations[0]);
     AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", uninstall.Operations[1]);
-    AssertEqual($"Delete:{StartupTaskManager.LegacyTaskName}", uninstall.Operations[2]);
+    AssertEqual($"Delete:{StartupTaskManager.TaskName}", uninstall.Operations[2]);
+    AssertEqual($"Delete:{StartupTaskManager.LegacyTaskName}", uninstall.Operations[3]);
     AssertEqual(false, uninstall.Tasks.ContainsKey(StartupTaskManager.TaskName));
     AssertEqual(false, uninstall.Tasks.ContainsKey(StartupTaskManager.LegacyTaskName));
 }
@@ -1610,11 +1775,15 @@ static void PreservesUnrecognizedLegacyStartupTaskDuringUninstall()
         "--background",
         "Unrelated maintenance task.");
 
-    StartupTaskManager.Uninstall(uninstall);
+    AssertThrows<StartupTaskOwnershipException>(() =>
+        StartupTaskManager.Uninstall(
+            @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
+            uninstall));
 
-    AssertEqual(2, uninstall.Operations.Count);
-    AssertEqual($"Delete:{StartupTaskManager.TaskName}", uninstall.Operations[0]);
+    AssertEqual(3, uninstall.Operations.Count);
+    AssertEqual($"Get:{StartupTaskManager.TaskName}", uninstall.Operations[0]);
     AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", uninstall.Operations[1]);
+    AssertEqual($"Delete:{StartupTaskManager.TaskName}", uninstall.Operations[2]);
     AssertEqual(false, uninstall.Tasks.ContainsKey(StartupTaskManager.TaskName));
     AssertEqual(true, uninstall.Tasks.ContainsKey(StartupTaskManager.LegacyTaskName));
 
@@ -1627,20 +1796,24 @@ static void PreservesUnrecognizedLegacyStartupTaskDuringUninstall()
         "--background",
         "Shows the Codex usage indicator companion.");
 
-    StartupTaskManager.Uninstall(unreadable);
+    AssertThrows<COMException>(() =>
+        StartupTaskManager.Uninstall(
+            @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
+            unreadable));
 
-    AssertEqual(2, unreadable.Operations.Count);
-    AssertEqual($"Delete:{StartupTaskManager.TaskName}", unreadable.Operations[0]);
-    AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", unreadable.Operations[1]);
+    AssertEqual(1, unreadable.Operations.Count);
+    AssertEqual($"Get:{StartupTaskManager.TaskName}", unreadable.Operations[0]);
     AssertEqual(true, unreadable.Tasks.ContainsKey(StartupTaskManager.LegacyTaskName));
 }
 
 static void TreatsMissingStartupTasksAsNonFatal()
 {
     var missing = new RecordingStartupTaskScheduler();
-    StartupTaskManager.Uninstall(missing);
+    StartupTaskManager.Uninstall(
+        @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
+        missing);
     AssertEqual(2, missing.Operations.Count);
-    AssertEqual($"Delete:{StartupTaskManager.TaskName}", missing.Operations[0]);
+    AssertEqual($"Get:{StartupTaskManager.TaskName}", missing.Operations[0]);
     AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", missing.Operations[1]);
 
     AssertEqual(false, StartupTaskManager.MigrateLegacyTask(
@@ -1661,10 +1834,12 @@ static void DoesNotMaskStartupTaskRemovalFailures()
         "Shows the Codex usage indicator companion.");
     firstDeleteFailure.DeleteFailures[StartupTaskManager.TaskName] =
         new COMException("Access denied.", unchecked((int)0x80070005));
-    AssertThrows<COMException>(() => StartupTaskManager.Uninstall(firstDeleteFailure));
-    AssertEqual(3, firstDeleteFailure.Operations.Count);
+    AssertThrows<COMException>(() => StartupTaskManager.Uninstall(
+        @"C:\Apps\UsageIndicatorForCodex.Gui.exe",
+        firstDeleteFailure));
+    AssertEqual(4, firstDeleteFailure.Operations.Count);
     AssertEqual($"Get:{StartupTaskManager.LegacyTaskName}", firstDeleteFailure.Operations[1]);
-    AssertEqual($"Delete:{StartupTaskManager.LegacyTaskName}", firstDeleteFailure.Operations[2]);
+    AssertEqual($"Delete:{StartupTaskManager.LegacyTaskName}", firstDeleteFailure.Operations[3]);
     AssertEqual(true, StartupTaskManager.IsMissingTaskError(unchecked((int)0x80070002)));
     AssertEqual(false, StartupTaskManager.IsMissingTaskError(unchecked((int)0x80070005)));
     AssertEqual(false, StartupTaskManager.IsMissingTaskError(unchecked((int)0x8004130F)));
@@ -1687,6 +1862,21 @@ static void AssertThrows<TException>(Action action) where TException : Exception
     catch (TException)
     {
         return;
+    }
+
+    throw new InvalidOperationException($"Expected {typeof(TException).Name}.");
+}
+
+static TException AssertThrowsAndReturn<TException>(Action action)
+    where TException : Exception
+{
+    try
+    {
+        action();
+    }
+    catch (TException exception)
+    {
+        return exception;
     }
 
     throw new InvalidOperationException($"Expected {typeof(TException).Name}.");
@@ -1730,9 +1920,10 @@ internal sealed class RecordingStartupTaskScheduler : IStartupTaskScheduler
     public void Register(
         string taskName,
         string executablePath,
-        StartupTaskConfiguration configuration)
+        StartupTaskConfiguration configuration,
+        StartupTaskRegistrationMode mode)
     {
-        Operations.Add($"Register:{taskName}");
+        Operations.Add($"Register:{taskName}:{mode}");
         if (RegisterFailure is not null)
         {
             throw RegisterFailure;
@@ -1743,7 +1934,8 @@ internal sealed class RecordingStartupTaskScheduler : IStartupTaskScheduler
         Tasks[taskName] = new StartupTaskInfo(
             executablePath,
             configuration.Arguments,
-            "Shows the Usage Indicator for Codex companion.");
+            "Shows the Usage Indicator for Codex companion.",
+            true);
     }
 
     public void Delete(string taskName)
