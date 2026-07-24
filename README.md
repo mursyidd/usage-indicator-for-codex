@@ -37,14 +37,22 @@ Desktop.
 
 The per-user installer is the only supported distribution:
 
-1. Download these two files from the intended GitHub Release:
+1. Download the installer from the intended GitHub Release:
 
    ```text
    UsageIndicatorForCodex-Setup-v0.1.0.exe
+   ```
+
+   You may also download the optional checksum file to verify the installer:
+
+   ```text
    UsageIndicatorForCodex-Setup-v0.1.0.exe.sha256
    ```
 
-2. Verify the checksum:
+   GitHub's automatically generated source-code archives are not installers.
+
+2. If you downloaded the checksum file, open a terminal in the folder containing
+   both files and verify the installer:
 
    ```powershell
    Get-FileHash .\UsageIndicatorForCodex-Setup-v0.1.0.exe -Algorithm SHA256
@@ -56,6 +64,7 @@ The per-user installer is the only supported distribution:
 
 3. Run the installer interactively. It installs only for the current user and
    does not request administrator privileges.
+
 4. Open a new terminal so it receives the updated user `PATH`.
 
 Public builds are currently unsigned. Windows may show Microsoft Defender
