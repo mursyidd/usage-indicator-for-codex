@@ -90,9 +90,12 @@ boundaries.
 The release contract contains only:
 
 ```text
-UsageIndicatorForCodex-Setup-v0.1.0.exe
-UsageIndicatorForCodex-Setup-v0.1.0.exe.sha256
+UsageIndicatorForCodex-Setup-v<version>.exe
+UsageIndicatorForCodex-Setup-v<version>.exe.sha256
 ```
+
+The exact version comes from canonical repository product metadata, must match
+the release tag, and the release still contains exactly two public assets.
 
 The installer displays the repository `LICENSE` and installs its byte-identical
 copy as `app\LICENSE.txt`. CI rebuilds the self-contained application and

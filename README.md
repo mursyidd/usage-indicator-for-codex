@@ -35,28 +35,43 @@ Desktop.
 
 ## Installation
 
-The per-user installer is the only supported distribution:
+The per-user installer is the only supported distribution. Download it from the
+repository's [Latest Release](../../releases/latest), after verifying the
+intended repository and release tag:
 
-1. Download the installer from the intended GitHub Release:
+1. Download the installer named for the version shown by that GitHub Release:
 
    ```text
-   UsageIndicatorForCodex-Setup-v0.1.0.exe
+   UsageIndicatorForCodex-Setup-v<version>.exe
    ```
 
    You may also download the optional checksum file to verify the installer:
 
    ```text
-   UsageIndicatorForCodex-Setup-v0.1.0.exe.sha256
+   UsageIndicatorForCodex-Setup-v<version>.exe.sha256
    ```
 
    GitHub's automatically generated source-code archives are not installers.
 
-2. If you downloaded the checksum file, open a terminal in the folder containing
-   both files and verify the installer:
+2. If you downloaded the checksum file, place only the installer and its
+   matching checksum file in one folder. Open a terminal in that folder and
+   verify the installer:
 
    ```powershell
-   Get-FileHash .\UsageIndicatorForCodex-Setup-v0.1.0.exe -Algorithm SHA256
-   Get-Content .\UsageIndicatorForCodex-Setup-v0.1.0.exe.sha256
+   $installers = @(
+       Get-ChildItem -LiteralPath . `
+           -Filter 'UsageIndicatorForCodex-Setup-v*.exe' `
+           -File
+   )
+
+   if ($installers.Count -ne 1) {
+       throw 'Expected exactly one Usage Indicator installer in this folder.'
+   }
+
+   $installer = $installers[0]
+
+   Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256
+   Get-Content -LiteralPath "$($installer.FullName).sha256"
    ```
 
    The hexadecimal values must match, and the checksum record must name the
@@ -72,6 +87,34 @@ SmartScreen or an unknown-publisher warning. Verify the intended repository and
 tag before deciding whether to run a build; do not disable system-wide security
 protections. A checksum downloaded from the same release detects corruption
 relative to that record but is not independent publisher authentication.
+
+## Quick start
+
+First run: download &rarr; install &rarr; open a new terminal &rarr; start the
+companion &rarr; inspect status.
+
+After installation, open a new terminal and run:
+
+```powershell
+usage-indicator start
+usage-indicator status
+```
+
+The new terminal is required because terminals that were already open do not
+receive the installer's updated user `PATH`.
+
+A successful fresh installation can legitimately report:
+
+```text
+running: true
+indicator-enabled: true
+startup: disabled
+```
+
+Startup is optional; it does not need to be enabled for the companion to run.
+For [`usage-indicator` is not recognized](#usage-indicator-is-not-recognized),
+[an indicator that is not visible](#the-indicator-is-not-visible), or
+[`Usage unavailable`](#the-indicator-shows-usage-unavailable), see [Troubleshooting](#troubleshooting).
 
 ## Installed layout
 
@@ -90,20 +133,8 @@ ownership only when it adds that exact entry, so uninstall preserves a matching
 entry that existed before installation.
 
 `UsageIndicatorForCodex.Gui.exe` is the internal WPF implementation and command
-host. Users should normally use `usage-indicator` instead of invoking it
+host, not a public command. Use `usage-indicator` instead of invoking it
 directly.
-
-## Quick start
-
-Open a new terminal after installation, then run:
-
-```powershell
-usage-indicator start
-usage-indicator status
-```
-
-The new terminal is required because terminals that were already open do not
-receive the installer's updated user `PATH`.
 
 ## Commands
 
@@ -265,7 +296,7 @@ responses fail closed to `Usage unavailable`.
 
 - `Usage —` means the companion is loading or refreshing.
 - `Usage unavailable` means no verified current CLI-account response was
-  available. It never means 0% remaining. Clicking it retries.
+  available. Usage unavailable does not mean 0% remaining. Clicking it retries.
 - A percentage appears only after a verified ChatGPT-account response with an
   active reset window.
 - The overlay hides when no eligible Codex Desktop window is visible, while its
@@ -292,6 +323,160 @@ Offsets are logical pixels from `-500` through `500`. Missing, malformed, or
 invalid canonical settings fall back to defaults. Valid settings from the
 historical `%LOCALAPPDATA%\CodexUsageIndicator\settings.json` location migrate
 atomically only when canonical settings do not already exist.
+
+## Troubleshooting
+
+### `usage-indicator` is not recognized
+
+Terminals already open during installation do not receive the updated user
+`PATH`. Close the old terminal, open a new PowerShell window, then run:
+
+```powershell
+usage-indicator version
+usage-indicator status
+```
+
+If it still fails, check whether the installed launcher exists:
+
+```powershell
+Test-Path "$env:LOCALAPPDATA\Programs\UsageIndicatorForCodex\bin\usage-indicator.exe"
+```
+
+`True` means the launcher is installed, but the terminal `PATH` may be stale or
+changed. `False` means installation is incomplete or the launcher was removed;
+rerun the official installer.
+
+### The indicator shows `Usage unavailable`
+
+Usage unavailable does not mean 0% remaining. It means no verified compatible
+usage response was obtained from the selected Codex CLI account. Possible
+causes include an unavailable or logged-out Codex CLI, API-key authentication
+instead of ChatGPT authentication, a `CODEX_CLI_PATH` that points to a missing,
+obsolete, unsupported, or incompatible file, a selected CLI that cannot launch,
+an incompatible or malformed CLI response, or failed network or account access.
+
+Inspect the local CLI and companion status:
+
+```powershell
+Get-Command codex -All
+codex --version
+usage-indicator status
+```
+
+Then restart the companion:
+
+```powershell
+usage-indicator stop
+usage-indicator start
+```
+
+Inspect overrides with:
+
+```powershell
+$env:CODEX_CLI_PATH
+[Environment]::GetEnvironmentVariable('CODEX_CLI_PATH', 'User')
+```
+
+Clicking `Usage unavailable` retries. Do not provide tokens, API keys,
+credential files, browser profiles, or authentication data when reporting this
+problem.
+
+### Displayed usage belongs to another account
+
+Codex Desktop is used only for overlay placement. Usage and account identity
+come from the separately installed Codex CLI. Codex Desktop and Codex CLI can
+use different ChatGPT accounts, and the companion does not automatically
+correlate those identities. Verify the account authenticated in the local Codex
+CLI; the application cannot read Codex Desktop identity.
+
+### The indicator is not visible
+
+Start with:
+
+```powershell
+usage-indicator status
+```
+
+- `running: false` &rarr; run `usage-indicator start`.
+- `indicator-enabled: false` &rarr; press `Ctrl+Alt+U`, then inspect status again.
+- If both are true, check that Codex Desktop is running, an eligible Codex
+  Desktop window is visible, it is not minimized, the title bar is wide enough,
+  and the overlay is not temporarily hidden during a window transition.
+
+Restart the companion if needed:
+
+```powershell
+usage-indicator stop
+usage-indicator start
+```
+
+### The reset time appears wrong
+
+Reset time uses the current Windows local timezone. Check:
+
+```powershell
+Get-TimeZone
+```
+
+Verify the Windows timezone, system date and time, and automatic time
+synchronization.
+
+### Status reports `startup: unrecognized`
+
+This is an ownership warning, not a failed status inspection. A same-name Task
+Scheduler entry exists, but its action is not positively recognized as belonging
+to this installation. The application refuses to modify or delete it, the
+installer disables startup mutation in this state, and the uninstaller preserves
+the foreign task. You may inspect Task Scheduler manually; do not delete the
+task blindly.
+
+### SmartScreen or unknown-publisher warning
+
+Public builds are currently unsigned. Download only from the official repository
+release, verify the repository and release tag, and optionally verify SHA-256.
+Do not disable SmartScreen or system-wide security protections. A checksum
+downloaded from the same release detects corruption relative to that checksum,
+but does not independently authenticate the publisher.
+
+### Update checking or installation fails
+
+Start with:
+
+```powershell
+usage-indicator check-update
+```
+
+Failures can mean GitHub is unavailable, the embedded repository URL is missing
+or invalid, release metadata is malformed, exact installer or checksum assets
+are missing, the checksum record names a different installer, SHA-256
+verification fails, another update is already running, or the installer cannot
+be launched.
+
+When another update holds the lock, the exact message is:
+
+```text
+An update is already in progress.
+```
+
+Do not replace installed files manually.
+
+### Bug-report diagnostic information
+
+Include this compact diagnostic bundle:
+
+```powershell
+usage-indicator version
+usage-indicator status
+codex --version
+Get-Command codex -All
+Get-TimeZone
+```
+
+Also include Windows version and architecture; whether Codex Desktop was visible
+or minimized; whether the issue followed installation, startup, update, or
+account switching; a relevant screenshot; and whether `CODEX_CLI_PATH` is
+configured. Do not include ChatGPT tokens, API keys, Codex credential files,
+browser data, or authentication secrets.
 
 ## Uninstall
 
@@ -330,9 +515,12 @@ dotnet run --project .\tests\UsageIndicatorForCodex.Tests\UsageIndicatorForCodex
 Release automation produces exactly:
 
 ```text
-UsageIndicatorForCodex-Setup-v0.1.0.exe
-UsageIndicatorForCodex-Setup-v0.1.0.exe.sha256
+UsageIndicatorForCodex-Setup-v<version>.exe
+UsageIndicatorForCodex-Setup-v<version>.exe.sha256
 ```
+
+The exact version comes from `Directory.Build.props` through
+`UsageIndicatorProductVersion`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the installer build, contract checks,
 and contribution requirements.

@@ -107,8 +107,8 @@ if (Test-Path -LiteralPath (Join-Path $repositoryRoot 'scripts\package-release.p
 }
 
 $expectedAssets = @(
-    'UsageIndicatorForCodex-Setup-v0.1.0.exe',
-    'UsageIndicatorForCodex-Setup-v0.1.0.exe.sha256'
+    "UsageIndicatorForCodex-Setup-v$($metadata.Version).exe",
+    "UsageIndicatorForCodex-Setup-v$($metadata.Version).exe.sha256"
 )
 $actualAssets = @(
     $metadata.InstallerAssetName,
@@ -138,6 +138,30 @@ catch {
 $commandSource = Get-Content -LiteralPath (
     Join-Path $repositoryRoot 'src\UsageIndicatorForCodex\CommandLineOptions.cs') -Raw
 $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw
+$requiredReadmeOrder = @(
+    '## Installation',
+    '## Quick start',
+    '## Installed layout',
+    '## Commands'
+)
+$previousReadmeSectionIndex = -1
+foreach ($section in $requiredReadmeOrder) {
+    $sectionIndex = $readme.IndexOf($section, [StringComparison]::Ordinal)
+    if ($sectionIndex -lt 0 -or $sectionIndex -le $previousReadmeSectionIndex) {
+        throw "README first-run sections are missing or out of order: $($requiredReadmeOrder -join ', ')"
+    }
+    $previousReadmeSectionIndex = $sectionIndex
+}
+
+$displayAndControlsIndex = $readme.IndexOf('## Display and controls', [StringComparison]::Ordinal)
+$troubleshootingIndex = $readme.IndexOf('## Troubleshooting', [StringComparison]::Ordinal)
+$uninstallIndex = $readme.IndexOf('## Uninstall', [StringComparison]::Ordinal)
+if ($troubleshootingIndex -lt 0 -or
+    $troubleshootingIndex -le $displayAndControlsIndex -or
+    $troubleshootingIndex -ge $uninstallIndex) {
+    throw 'README Troubleshooting must follow Display and controls and precede Uninstall.'
+}
+
 $requiredCommands = @(
     'start',
     'stop',
@@ -186,14 +210,15 @@ foreach ($forbiddenHelpFragment in @(
 $publicContractDocuments = [ordered]@{
     'README.md' = @(
         '## Installation',
-        '## Installed layout',
         '## Quick start',
+        '## Installed layout',
         '## Commands',
         '## Status and exit codes',
         '## Start with Windows',
         '## Updates',
         '## Codex CLI configuration',
         '## Display and controls',
+        '## Troubleshooting',
         '## Uninstall',
         '## Security and privacy',
         '## Development and contributing',
@@ -203,6 +228,13 @@ $publicContractDocuments = [ordered]@{
         'exits `2`',
         'startup: unrecognized',
         'An update is already in progress.',
+        '`usage-indicator` is not recognized',
+        'Usage unavailable does not mean 0% remaining.',
+        'Get-TimeZone',
+        'Do not include',
+        '[`usage-indicator` is not recognized](#usage-indicator-is-not-recognized)',
+        '[an indicator that is not visible](#the-indicator-is-not-visible)',
+        '[`Usage unavailable`](#the-indicator-shows-usage-unavailable)',
         'UsageIndicatorForCodex.Gui.exe',
         'LICENSE.txt',
         'Arm64'
@@ -213,7 +245,10 @@ $publicContractDocuments = [ordered]@{
         'operational inspection failures return `1`',
         'An update is already in progress.',
         'LICENSE.txt',
-        'Arm64'
+        'Arm64',
+        'UsageIndicatorForCodex-Setup-v<version>.exe',
+        'UsageIndicatorForCodex-Setup-v<version>.exe.sha256',
+        'exactly two public assets'
     )
     'CONTRIBUTING.md' = @(
         'UsageIndicatorForCodex.Gui.exe --background',
@@ -222,7 +257,10 @@ $publicContractDocuments = [ordered]@{
         'Ownership collisions exit `2`',
         'operational inspection failures',
         'LICENSE.txt',
-        'Arm64'
+        'Arm64',
+        'Get-UsageIndicatorProductMetadata',
+        '$installerPath = Join-Path $release $metadata.InstallerAssetName',
+        '-InstallerPath $installerPath'
     )
     '2026-07-23-usage-indicator-for-codex-design.md' = @(
         'Distribution and Command Architecture',
@@ -279,13 +317,44 @@ if ($appServerSource.IndexOf('version = "1.0.0"', [StringComparison]::Ordinal) -
     throw 'Codex app-server clientInfo.version is not authoritative.'
 }
 
-foreach ($documentPath in @('README.md', 'SECURITY.md')) {
+foreach ($documentPath in @(
+    'README.md',
+    'CONTRIBUTING.md',
+    'SECURITY.md',
+    '.github\workflows\ci.yml'
+)) {
     $document = Get-Content -LiteralPath (Join-Path $repositoryRoot $documentPath) -Raw
-    foreach ($assetName in $expectedAssets) {
-        if ($document.IndexOf($assetName, [StringComparison]::Ordinal) -lt 0) {
-            throw "$documentPath is missing release asset $assetName."
-        }
+    if ($document -cmatch 'UsageIndicatorForCodex-Setup-v\d+\.\d+\.\d+\.exe') {
+        throw "$documentPath contains a version-literal installer filename in an evergreen surface."
     }
+}
+
+foreach ($requiredReadmeFragment in @(
+    'UsageIndicatorForCodex-Setup-v<version>.exe',
+    'UsageIndicatorForCodex-Setup-v<version>.exe.sha256',
+    '$installers = @(',
+    "throw 'Expected exactly one Usage Indicator installer in this folder.'",
+    'Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256',
+    'Get-Content -LiteralPath "$($installer.FullName).sha256"'
+)) {
+    if ($readme.IndexOf($requiredReadmeFragment, [StringComparison]::Ordinal) -lt 0) {
+        throw "README is missing version-neutral installer guidance: $requiredReadmeFragment"
+    }
+}
+
+foreach ($forbiddenReadmeFragment in @(
+    'Usage unavailable means 0% remaining',
+    'share your API key',
+    'share your token',
+    'UsageIndicatorForCodex.Gui.exe start',
+    'UsageIndicatorForCodex.Gui.exe stop'
+)) {
+    if ($readme.IndexOf($forbiddenReadmeFragment, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "README contains unsafe public guidance: $forbiddenReadmeFragment"
+    }
+}
+if ($readme -cmatch '(?im)^(?!.*\bdo not\b).*\b(?:disable|turn off)\s+(?:Microsoft Defender\s+)?SmartScreen\b') {
+    throw 'README instructs users to disable SmartScreen.'
 }
 
 $releaseAssetScript = Get-Content -LiteralPath (
@@ -348,6 +417,9 @@ $releaseWorkflow = Get-Content -LiteralPath (
     Join-Path $repositoryRoot '.github\workflows\release.yml') -Raw
 $innoVerifier = Get-Content -LiteralPath (
     Join-Path $repositoryRoot 'scripts\verify-inno-setup.ps1') -Raw
+if ($ciWorkflow.IndexOf('name: usage-indicator-for-codex-release-assets', [StringComparison]::Ordinal) -lt 0) {
+    throw 'CI artifact label must be version-neutral.'
+}
 foreach ($fragment in @(
     '$env:GITHUB_REF_NAME -cne $metadata.Tag',
     '${{ github.server_url }}/${{ github.repository }}',

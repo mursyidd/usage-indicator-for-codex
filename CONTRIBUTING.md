@@ -54,12 +54,19 @@ dotnet publish .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj `
   -OutputDirectory $release `
   -RepositoryUrl $repositoryUrl
 
+. .\scripts\product-metadata.ps1
+
+$metadata = Get-UsageIndicatorProductMetadata `
+  -RepositoryUrl $repositoryUrl
+
+$installerPath = Join-Path $release $metadata.InstallerAssetName
+
 .\scripts\release-assets.ps1 `
-  -InstallerPath (Join-Path $release 'UsageIndicatorForCodex-Setup-v0.1.0.exe') `
+  -InstallerPath $installerPath `
   -OutputDirectory $release
 
 .\tests\installer-contract.ps1 `
-  -InstallerPath (Join-Path $release 'UsageIndicatorForCodex-Setup-v0.1.0.exe')
+  -InstallerPath $installerPath
 .\tests\release-contract.ps1 -AssetDirectory $release
 ```
 
