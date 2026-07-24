@@ -93,7 +93,7 @@ var checks = new (string Name, Action Run)[]
     ("uses the canonical assembly identities", UsesCanonicalAssemblyIdentities),
     ("uses the authoritative product version", UsesAuthoritativeProductVersion),
     ("sends the authoritative app-server client version", SendsAuthoritativeAppServerVersion),
-    ("formats MYT timestamps without a zone label", FormatsMalaysiaTime),
+    ("formats reset timestamps in the local timezone without a zone label", FormatsLocalTime),
     ("selects every responsive layout", SelectsResponsiveLayouts),
     ("sizes the full overlay to its rendered content", SizesFullOverlayToContent),
     ("measures layouts against available title-bar space", MeasuresLayoutsAgainstAvailableWidth),
@@ -264,10 +264,16 @@ static void SendsAuthoritativeAppServerVersion()
     });
 }
 
-static void FormatsMalaysiaTime()
+static void FormatsLocalTime()
 {
     var timestamp = new DateTimeOffset(2026, 7, 24, 2, 30, 0, TimeSpan.Zero);
-    AssertEqual("24 July 10:30 am", IndicatorPresentation.FormatResetTime(timestamp));
+    var pacific = TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
+
+    AssertEqual("23 July 7:30 pm", IndicatorPresentation.FormatResetTime(timestamp, pacific));
+    AssertEqual("24 July 2:30 am", IndicatorPresentation.FormatResetTime(timestamp, TimeZoneInfo.Utc));
+    AssertEqual(
+        IndicatorPresentation.FormatResetTime(timestamp, TimeZoneInfo.Local),
+        IndicatorPresentation.FormatResetTime(timestamp));
 }
 
 static void SelectsResponsiveLayouts()
