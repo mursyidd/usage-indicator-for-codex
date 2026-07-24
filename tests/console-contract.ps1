@@ -17,6 +17,8 @@ $guiExecutableName = 'UsageIndicatorForCodex.Gui.exe'
 $windowsPowerShell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
 . (Join-Path $PSScriptRoot '..\scripts\product-metadata.ps1')
 $metadata = Get-UsageIndicatorProductMetadata
+$repositoryLicensePath = Join-Path (Resolve-Path -LiteralPath (
+    Join-Path $PSScriptRoot '..')).Path 'LICENSE'
 
 function Assert-True {
     param(
@@ -180,6 +182,26 @@ if (-not [string]::IsNullOrWhiteSpace($ArchivePath)) {
         $entryNames = @($archive.Entries | ForEach-Object FullName)
         Assert-True ($publicExecutableName -cin $entryNames) "Archive is missing $publicExecutableName."
         Assert-True ($guiExecutableName -cin $entryNames) "Archive is missing $guiExecutableName."
+        $licenseEntry = $archive.GetEntry('LICENSE.txt')
+        Assert-True ($null -ne $licenseEntry) 'Archive is missing root LICENSE.txt.'
+        $licenseStream = $licenseEntry.Open()
+        try {
+            $licenseCopy = [IO.MemoryStream]::new()
+            try {
+                $licenseStream.CopyTo($licenseCopy)
+                Assert-True (
+                    [Linq.Enumerable]::SequenceEqual(
+                        [byte[]][IO.File]::ReadAllBytes($repositoryLicensePath),
+                        [byte[]]$licenseCopy.ToArray())
+                ) 'Archive LICENSE.txt does not match the repository LICENSE.'
+            }
+            finally {
+                $licenseCopy.Dispose()
+            }
+        }
+        finally {
+            $licenseStream.Dispose()
+        }
 
         $prohibitedPathComponents = @('.git', 'src', 'tests', 'bin', 'obj')
         $prohibitedExtensions = @('.cs', '.csproj', '.sln', '.slnx', '.xaml', '.props', '.targets', '.pdb')

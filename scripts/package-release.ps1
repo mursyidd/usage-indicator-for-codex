@@ -14,6 +14,7 @@ $expectedArchiveName = $metadata.PortableAssetName
 $requiredFiles = @(
     'UsageIndicatorForCodex.exe',
     'UsageIndicatorForCodex.Gui.exe',
+    'LICENSE.txt',
     'coreclr.dll',
     'hostfxr.dll',
     'hostpolicy.dll'

@@ -19,12 +19,17 @@ if ([string]::IsNullOrWhiteSpace($metadata.RepositoryUrl)) {
 
 $publishRoot = (Resolve-Path -LiteralPath $PublishDirectory).Path
 $launcherPath = (Resolve-Path -LiteralPath $InstalledLauncher).Path
+$repositoryLicensePath = (Resolve-Path -LiteralPath (
+    Join-Path $repositoryRoot 'LICENSE')).Path
 if ((Split-Path -Leaf $launcherPath) -cne 'usage-indicator.exe') {
     throw 'Installed launcher must be named usage-indicator.exe.'
 }
 
 if (-not (Test-Path -LiteralPath (Join-Path $publishRoot 'UsageIndicatorForCodex.Gui.exe') -PathType Leaf)) {
     throw 'Publish directory is missing UsageIndicatorForCodex.Gui.exe.'
+}
+if (-not (Test-Path -LiteralPath (Join-Path $publishRoot 'LICENSE.txt') -PathType Leaf)) {
+    throw 'Publish directory is missing LICENSE.txt.'
 }
 
 if ([string]::IsNullOrWhiteSpace($IsccPath)) {
@@ -60,6 +65,7 @@ $arguments = @(
     "/DProductVersion=$($metadata.Version)",
     "/DInstallerBaseName=$installerBaseName",
     "/DRepositoryUrl=$($metadata.RepositoryUrl)",
+    "/DRepositoryLicensePath=$repositoryLicensePath",
     "/O$outputRoot",
     $installerScript
 )

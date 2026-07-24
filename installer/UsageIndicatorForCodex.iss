@@ -13,6 +13,9 @@
 #ifndef RepositoryUrl
   #error RepositoryUrl must be defined.
 #endif
+#ifndef RepositoryLicensePath
+  #error RepositoryLicensePath must be defined.
+#endif
 
 #define ProductName "Usage Indicator for Codex"
 #define ProductExecutable "UsageIndicatorForCodex.Gui.exe"
@@ -32,6 +35,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.22000
+LicenseFile={#RepositoryLicensePath}
 OutputBaseFilename={#InstallerBaseName}
 Compression=lzma2/max
 SolidCompression=yes
@@ -48,7 +52,8 @@ VersionInfoProductName={#ProductName}
 VersionInfoDescription={#ProductName} per-user installer
 
 [Files]
-Source: "{#PublishDirectory}\*"; DestDir: "{app}\app"; Excludes: "UsageIndicatorForCodex.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishDirectory}\*"; DestDir: "{app}\app"; Excludes: "UsageIndicatorForCodex.exe,LICENSE.txt"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#RepositoryLicensePath}"; DestDir: "{app}\app"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "{#InstalledLauncher}"; DestDir: "{app}\bin"; DestName: "usage-indicator.exe"; Flags: ignoreversion
 
 [Icons]
