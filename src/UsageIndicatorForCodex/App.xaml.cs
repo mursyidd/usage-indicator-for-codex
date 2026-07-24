@@ -310,31 +310,25 @@ public partial class App : System.Windows.Application
                 Path.GetTempPath(),
                 "UsageIndicatorForCodex",
                 "updates");
-            var installerPath = await updateService.PrepareUpdateAsync(
-                updateRoot,
+            var result = await UpdateCommandRunner.ExecuteAsync(
+                UpdateMutexService.CreateForCurrentUser,
+                cancellationToken => updateService.PrepareUpdateAsync(
+                    updateRoot,
+                    cancellationToken),
+                StopRunningInstanceAsync,
+                installerPath =>
+                {
+                    _ = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = installerPath,
+                        UseShellExecute = true
+                    }) ?? throw new InvalidOperationException(
+                        "The installer process could not be started.");
+                },
+                ProductInfo.Version,
                 CancellationToken.None);
-            if (installerPath is null)
-            {
-                CommandLineOutput.Show($"Up to date: {ProductInfo.Version}.", isError: false);
-                Shutdown(0);
-                return;
-            }
-
-            if (!await StopRunningInstanceAsync())
-            {
-                throw new InvalidOperationException(
-                    "The running application could not be stopped before launching the installer.");
-            }
-
-            _ = Process.Start(new ProcessStartInfo
-            {
-                FileName = installerPath,
-                UseShellExecute = true
-            }) ?? throw new InvalidOperationException("The installer process could not be started.");
-            CommandLineOutput.Show(
-                $"Launching verified installer {Path.GetFileName(installerPath)}.",
-                isError: false);
-            Shutdown(0);
+            CommandLineOutput.Show(result.Message, result.IsError);
+            Shutdown(result.ExitCode);
         }
         catch (Exception exception)
         {

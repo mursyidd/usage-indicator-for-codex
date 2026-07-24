@@ -104,6 +104,12 @@ var checks = new (string Name, Action Run)[]
     ("checks for updates without downloading assets", ChecksForUpdatesWithoutDownloadingAssets),
     ("downloads only checksum-verified installers", DownloadsOnlyChecksumVerifiedInstallers),
     ("rejects invalid update checksums and repository URLs", RejectsInvalidUpdatesAndRepositoryUrls),
+    ("rejects concurrent updates before update work begins", RejectsConcurrentUpdatesBeforeWork),
+    ("recovers an abandoned per-user update mutex", RecoversAbandonedUpdateMutex),
+    ("releases the update mutex after completion", ReleasesUpdateMutexAfterCompletion),
+    ("releases the update mutex after update failure", ReleasesUpdateMutexAfterFailure),
+    ("releases the update mutex after cancellation", ReleasesUpdateMutexAfterCancellation),
+    ("keeps the update mutex through successful installer handoff", KeepsUpdateMutexThroughInstallerHandoff),
     ("routes commands to a single primary instance", RoutesCommandsToPrimaryInstance),
     ("coordinates canonical and legacy instance identities", CoordinatesCanonicalAndLegacyInstances),
     ("serves canonical and legacy command pipes", ServesCanonicalAndLegacyCommandPipes),
@@ -548,6 +554,178 @@ static void RejectsInvalidUpdatesAndRepositoryUrls()
             $"{new string('0', 64)}  UsageIndicatorForCodex-Setup-v0.2.0.exe\n"
             + $"{new string('0', 64)}  extra.exe",
             "UsageIndicatorForCodex-Setup-v0.2.0.exe"));
+}
+
+static void RejectsConcurrentUpdatesBeforeWork()
+{
+    var userIdentity = $"contention-{Guid.NewGuid():N}";
+    var mutexName = $"Local\\UsageIndicatorForCodex-Update-{userIdentity}";
+    WithMutexOwnedOnAnotherThread(mutexName, () =>
+    {
+        using var blocked = new UpdateMutexService(userIdentity);
+        AssertEqual(mutexName, blocked.MutexName);
+        AssertEqual(false, blocked.IsAcquired);
+    });
+
+    var disposed = false;
+    var updateWorkStarted = false;
+    var result = UpdateCommandRunner.ExecuteAsync(
+            () => new RecordingUpdateMutexLease(
+                isAcquired: false,
+                () => disposed = true),
+            _ =>
+            {
+                updateWorkStarted = true;
+                return Task.FromResult<string?>(null);
+            },
+            () =>
+            {
+                updateWorkStarted = true;
+                return Task.FromResult(true);
+            },
+            _ => updateWorkStarted = true,
+            ProductInfo.Version,
+            CancellationToken.None)
+        .GetAwaiter()
+        .GetResult();
+
+    AssertEqual(1, result.ExitCode);
+    AssertEqual("An update is already in progress.", result.Message);
+    AssertEqual(true, result.IsError);
+    AssertEqual(false, updateWorkStarted);
+    AssertEqual(true, disposed);
+}
+
+static void RecoversAbandonedUpdateMutex()
+{
+    var userIdentity = $"abandoned-{Guid.NewGuid():N}";
+    var mutexName = $"Local\\UsageIndicatorForCodex-Update-{userIdentity}";
+    using var acquired = new ManualResetEventSlim(false);
+    var abandoningThread = new Thread(() =>
+    {
+        var mutex = new Mutex(false, mutexName);
+        AssertEqual(true, mutex.WaitOne(0));
+        acquired.Set();
+    });
+    abandoningThread.Start();
+    AssertEqual(true, acquired.Wait(TimeSpan.FromSeconds(5)));
+    AssertEqual(true, abandoningThread.Join(TimeSpan.FromSeconds(5)));
+
+    using var recovered = new UpdateMutexService(userIdentity);
+    AssertEqual(mutexName, recovered.MutexName);
+    AssertEqual(true, recovered.IsAcquired);
+}
+
+static void ReleasesUpdateMutexAfterCompletion()
+{
+    var userIdentity = $"cleanup-{Guid.NewGuid():N}";
+    using (var first = new UpdateMutexService(userIdentity))
+    {
+        AssertEqual(true, first.IsAcquired);
+    }
+
+    using var second = new UpdateMutexService(userIdentity);
+    AssertEqual(true, second.IsAcquired);
+}
+
+static void ReleasesUpdateMutexAfterFailure()
+{
+    var disposed = false;
+    AssertThrows<InvalidDataException>(() =>
+        UpdateCommandRunner.ExecuteAsync(
+                () => new RecordingUpdateMutexLease(
+                    isAcquired: true,
+                    () => disposed = true),
+                _ => throw new InvalidDataException("Checksum mismatch."),
+                () => Task.FromResult(true),
+                _ => throw new InvalidOperationException("Must not launch."),
+                ProductInfo.Version,
+                CancellationToken.None)
+            .GetAwaiter()
+            .GetResult());
+    AssertEqual(true, disposed);
+}
+
+static void ReleasesUpdateMutexAfterCancellation()
+{
+    var disposed = false;
+    using var cancellation = new CancellationTokenSource();
+    cancellation.Cancel();
+    AssertThrows<OperationCanceledException>(() =>
+        UpdateCommandRunner.ExecuteAsync(
+                () => new RecordingUpdateMutexLease(
+                    isAcquired: true,
+                    () => disposed = true),
+                token => Task.FromCanceled<string?>(token),
+                () => Task.FromResult(true),
+                _ => throw new InvalidOperationException("Must not launch."),
+                ProductInfo.Version,
+                cancellation.Token)
+            .GetAwaiter()
+            .GetResult());
+    AssertEqual(true, disposed);
+}
+
+static void KeepsUpdateMutexThroughInstallerHandoff()
+{
+    var operations = new List<string>();
+    var result = UpdateCommandRunner.ExecuteAsync(
+            () =>
+            {
+                operations.Add("lock");
+                return new RecordingUpdateMutexLease(
+                    isAcquired: true,
+                    () => operations.Add("release"));
+            },
+            _ =>
+            {
+                operations.Add("prepare");
+                return Task.FromResult<string?>(@"C:\Updates\Setup.exe");
+            },
+            () =>
+            {
+                operations.Add("stop");
+                return Task.FromResult(true);
+            },
+            path =>
+            {
+                AssertEqual(@"C:\Updates\Setup.exe", path);
+                operations.Add("launch");
+            },
+            ProductInfo.Version,
+            CancellationToken.None)
+        .GetAwaiter()
+        .GetResult();
+
+    AssertEqual(0, result.ExitCode);
+    AssertEqual("Launching verified installer Setup.exe.", result.Message);
+    AssertEqual(
+        "lock,prepare,stop,launch,release",
+        string.Join(',', operations));
+
+    var noUpdateDisposed = false;
+    var stopped = false;
+    var launched = false;
+    var noUpdate = UpdateCommandRunner.ExecuteAsync(
+            () => new RecordingUpdateMutexLease(
+                isAcquired: true,
+                () => noUpdateDisposed = true),
+            _ => Task.FromResult<string?>(null),
+            () =>
+            {
+                stopped = true;
+                return Task.FromResult(true);
+            },
+            _ => launched = true,
+            ProductInfo.Version,
+            CancellationToken.None)
+        .GetAwaiter()
+        .GetResult();
+    AssertEqual(0, noUpdate.ExitCode);
+    AssertEqual($"Up to date: {ProductInfo.Version}.", noUpdate.Message);
+    AssertEqual(false, stopped);
+    AssertEqual(false, launched);
+    AssertEqual(true, noUpdateDisposed);
 }
 
 static string CreateReleaseJson(string version) => $$"""
@@ -2062,5 +2240,25 @@ internal sealed class RecordingHttpMessageHandler(
     {
         Requests.Add(request);
         return Task.FromResult(responseFactory(request));
+    }
+}
+
+internal sealed class RecordingUpdateMutexLease(
+    bool isAcquired,
+    Action onDispose) : IUpdateMutexLease
+{
+    private bool _disposed;
+
+    public bool IsAcquired { get; } = isAcquired;
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        onDispose();
     }
 }
