@@ -50,6 +50,7 @@ internal sealed record CommandLineOptions(CommandLineAction Action, int ExitCode
 
         Running usage-indicator without arguments shows this help.
         Running UsageIndicatorForCodex.exe without arguments starts the application.
+        Portable updates are not supported; download and run the installer, or replace the complete portable directory manually.
         --install registers automatic startup only; it does not launch the application.
         """;
 

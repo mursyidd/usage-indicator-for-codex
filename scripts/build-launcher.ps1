@@ -142,6 +142,7 @@ try {
     }
     $defaultArgument = if ($Layout -ceq 'Installed') { 'help' } else { '' }
     $asyncArgument = if ($Layout -ceq 'Installed') { 'start' } else { '--background' }
+    $rejectUpdate = if ($Layout -ceq 'Portable') { 1 } else { 0 }
 
     Invoke-NativeBuildTool $libraryManager @(
         '/nologo',
@@ -173,6 +174,7 @@ try {
         "/DLAUNCHER_GUI_RELATIVE_PATH=L\`"$guiRelativePath\`"",
         "/DLAUNCHER_DEFAULT_ARGUMENT=L\`"$defaultArgument\`"",
         "/DLAUNCHER_ASYNC_ARGUMENT=L\`"$asyncArgument\`"",
+        "/DLAUNCHER_REJECT_UPDATE=$rejectUpdate",
         (Join-Path $sourceDirectory 'launcher.c'),
         "/Fo$objectPath"
     )

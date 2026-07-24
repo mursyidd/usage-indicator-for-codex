@@ -75,7 +75,9 @@ dotnet publish .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj `
 ```
 
 Do not weaken package-content, launcher-layout, installer-ownership, version,
-tag, or four-asset checks.
+tag, or four-asset checks. The portable archive must contain root
+`LICENSE.txt`, the installer must display and install `app\LICENSE.txt`, and
+both files must remain byte-identical to repository `LICENSE`.
 
 ## Maintaining the Inno Setup pin
 
@@ -109,7 +111,9 @@ Tests and documentation may name the current expected value and asset contract.
 When changing installed commands, update the managed parser, launcher contract,
 README command list, startup/update behavior, and tests together. Preserve the
 portable `UsageIndicatorForCodex.exe` switches unless a compatibility break is
-explicitly approved.
+explicitly approved. The portable `update` verb is intentionally rejected; it
+must never invoke the installed-distribution updater or imply that the portable
+directory was replaced.
 
 ## Security-sensitive changes
 
@@ -124,7 +128,19 @@ security-sensitive boundaries.
 
 Updates must remain explicit and interactive. They must verify the exact
 versioned installer against its exact checksum and must not directly replace
-running application files.
+running application files. `update` must acquire the distinct per-user update
+mutex before any network access and hold it through installer launch; all exit
+paths must release it. `check-update` remains lock-free.
+
+Startup ownership must remain path-specific. Both exact canonical forms are
+owned: `UsageIndicatorForCodex.Gui.exe --background` and its exact sibling
+`UsageIndicatorForCodex.exe --background`. Foreign canonical and legacy tasks
+are preserved. Ownership collisions exit `2`, operational inspection failures
+exit `1`, and uninstall removes only positively recognized owned tasks.
+
+The installer targets Windows 11 with `ArchitecturesAllowed=x64compatible`.
+That permits Arm64 only through x64 emulation; Arm64 remains unverified and
+Windows 10 remains unsupported.
 
 Use synthetic account, release, asset, and rate-limit data in normal tests.
 Account-backed or network-backed probes require deliberate manual invocation

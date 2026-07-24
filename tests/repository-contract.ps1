@@ -133,6 +133,10 @@ catch {
 
 $commandSource = Get-Content -LiteralPath (
     Join-Path $repositoryRoot 'src\UsageIndicatorForCodex\CommandLineOptions.cs') -Raw
+$launcherSource = Get-Content -LiteralPath (
+    Join-Path $repositoryRoot 'src\UsageIndicatorForCodex.Launcher\launcher.c') -Raw
+$launcherBuild = Get-Content -LiteralPath (
+    Join-Path $repositoryRoot 'scripts\build-launcher.ps1') -Raw
 $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw
 $requiredCommands = @(
     'start',
@@ -151,6 +155,70 @@ foreach ($command in $requiredCommands) {
     }
     if ($readme.IndexOf("usage-indicator $command", [StringComparison]::Ordinal) -lt 0) {
         throw "README is missing installed verb: usage-indicator $command"
+    }
+}
+
+foreach ($fragment in @(
+    '#define LAUNCHER_REJECT_UPDATE 1',
+    'Portable updates are not supported. Download and run the installer, or replace the complete portable directory manually.',
+    'ExitProcess(2);'
+)) {
+    if ($launcherSource.IndexOf($fragment, [StringComparison]::Ordinal) -lt 0) {
+        throw "Portable launcher update policy is missing: $fragment"
+    }
+}
+foreach ($fragment in @(
+    '$rejectUpdate = if ($Layout -ceq ''Portable'') { 1 } else { 0 }',
+    '"/DLAUNCHER_REJECT_UPDATE=$rejectUpdate"'
+)) {
+    if ($launcherBuild.IndexOf($fragment, [StringComparison]::Ordinal) -lt 0) {
+        throw "Launcher build layout policy is missing: $fragment"
+    }
+}
+
+$publicContractDocuments = [ordered]@{
+    'README.md' = @(
+        'UsageIndicatorForCodex.exe --background',
+        'foreign canonical tasks',
+        'ownership collisions return',
+        'startup: unrecognized',
+        'An update is already in progress.',
+        'UsageIndicatorForCodex.exe update',
+        'LICENSE.txt',
+        'Arm64'
+    )
+    'SECURITY.md' = @(
+        'Foreign canonical',
+        'Ownership collisions return exit code `2`',
+        'operational inspection failures return `1`',
+        'An update is already in progress.',
+        'LICENSE.txt',
+        'Arm64'
+    )
+    'CONTRIBUTING.md' = @(
+        'UsageIndicatorForCodex.Gui.exe --background',
+        'UsageIndicatorForCodex.exe --background',
+        'Ownership collisions exit `2`',
+        'operational inspection failures',
+        'LICENSE.txt',
+        'Arm64'
+    )
+    '2026-07-23-usage-indicator-for-codex-design.md' = @(
+        'Distribution and Command Architecture',
+        'UsageIndicatorForCodex.exe --background',
+        'Ownership collisions exit `2`',
+        'An update is already in progress.',
+        'LICENSE.txt',
+        'Arm64'
+    )
+}
+foreach ($documentEntry in $publicContractDocuments.GetEnumerator()) {
+    $document = Get-Content -LiteralPath (
+        Join-Path $repositoryRoot $documentEntry.Key) -Raw
+    foreach ($fragment in $documentEntry.Value) {
+        if ($document.IndexOf($fragment, [StringComparison]::Ordinal) -lt 0) {
+            throw "$($documentEntry.Key) is missing public contract text: $fragment"
+        }
     }
 }
 

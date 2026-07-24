@@ -1,13 +1,32 @@
 # Usage Indicator for Codex Design
 
 Date: 23 July 2026
-Status: CLI-account contract; production startup and CLI-account live display enabled
+Status: Implemented installer, installed CLI, portable compatibility, safe startup ownership, and explicit updates
 
 ## Purpose
 
 Provide a usage indicator for the account authenticated in the configured local Codex CLI. It appears visually centered over a Codex Desktop title bar without modifying the signed Codex installation.
 
 The indicator runs as an independent Windows companion. Codex Desktop is only the window the companion detects and follows for placement; it is not the identity source for the displayed usage.
+
+## Distribution and Command Architecture
+
+The recommended distribution is the per-user Inno Setup installer. It installs
+the self-contained GUI under
+`%LOCALAPPDATA%\Programs\UsageIndicatorForCodex\app`, installs
+`usage-indicator.exe` under the sibling `bin` directory, and adds only that
+owned `bin` entry to the current user's `PATH`. The installed launcher provides
+the public `start`, `stop`, `status`, `version`, `check-update`, `update`,
+`enable-startup`, `disable-startup`, and `help` verbs. The GUI remains the
+managed command host.
+
+The portable ZIP is a secondary compatibility distribution with the sibling
+`UsageIndicatorForCodex.exe` launcher. Its `update` verb is rejected with exit
+code `2`; portable replacement is manual and never masquerades as an in-place
+update. Both distributions contain `LICENSE.txt` sourced from repository
+`LICENSE`, and the installer displays the same license. Release builds are
+self-contained `win-x64`. Windows 11 Arm64 is permitted through x64 emulation
+but remains unverified; Windows 10 is unsupported.
 
 ## Display
 
@@ -124,9 +143,18 @@ The companion uses Windows window events rather than frequent position polling.
 
 ## Startup and Update Resilience
 
-Automatic startup is enabled through `--install` from the published companion executable. The command creates only the companion-owned per-user Task Scheduler task.
+Automatic startup is enabled through installed
+`usage-indicator enable-startup` or portable `--install`. A normal launch does
+not register startup.
 
-A normal launch starts the companion immediately and does not register startup. `--install` performs startup registration only and then exits.
+The canonical `UsageIndicatorForCodex` task has two positively recognized
+forms: the exact expected `UsageIndicatorForCodex.Gui.exe --background` path,
+or the exact sibling `UsageIndicatorForCodex.exe --background` path in the same
+application directory. Enabling startup migrates the recognized launcher form
+to the direct GUI form. Same-name executables elsewhere, malformed or
+ambiguous actions, and foreign canonical or legacy tasks are preserved.
+Ownership collisions exit `2`; operational scheduler inspection failures exit
+`1`. Disable and uninstall remove only positively recognized owned tasks.
 
 The startup task must:
 
@@ -140,6 +168,15 @@ The startup task must:
 - leave the signed Codex package unchanged.
 
 A crashed companion cannot restart itself. Task Scheduler owns the bounded restart policy; no separate watchdog is required.
+
+Installed updates are explicit. `check-update` reads stable release metadata
+without locking or downloading. `update` acquires a distinct per-user mutex
+before network access, downloads the exact installer and checksum assets,
+verifies the filename-bound SHA-256 record, stops the GUI, and launches the
+installer interactively. The mutex is released after success, no update,
+failure, cancellation, or handoff; abandoned mutexes are recoverable. A
+concurrent update exits `1` with `An update is already in progress.` The updater
+never directly overwrites installed or portable files.
 
 A major Codex title-bar redesign may require a companion update. Configurable alignment offsets provide a recovery path for minor layout changes.
 
@@ -157,13 +194,22 @@ Refreshing must not cause model requests or consume usage merely to update the i
 
 No Codex skill is required for normal operation.
 
-The companion provides `Ctrl+Alt+U` or `--toggle` to enable or disable the overlay without changing Codex. `--revalidate-cli` is the user-invoked CLI-account validation command. `--exit` stops a running canonical instance. `--help` and `-h` show command help. Invalid, duplicate, or combined arguments fail without starting the application. Live CLI-account usage is enabled during normal operation, while automatic startup is installed only by the explicit `--install` command.
+The companion provides `Ctrl+Alt+U` or portable `--toggle` to enable or disable the overlay without changing Codex. Portable `--revalidate-cli` is the user-invoked CLI-account validation command. Installed `stop` and portable `--exit` stop a running canonical instance. Help is available from both launchers. Invalid, duplicate, or combined arguments fail without starting the application. Live CLI-account usage is enabled during normal operation, while automatic startup remains explicit.
 
-Uninstallation removes only:
+The installed uninstaller removes application files and only the PATH entry it
+recorded as owned. Before file removal it asks the installed CLI to remove
+positively recognized owned startup tasks. Foreign canonical and legacy tasks
+remain untouched. When status reports `startup: unrecognized`, the installer
+disables its startup checkbox and performs zero startup mutation.
 
-- its per-user startup registration when `--uninstall` is run.
-
-Complete removal additionally requires exiting the companion, deleting its published files, and optionally deleting its local settings at `%LOCALAPPDATA%\UsageIndicatorForCodex`. During migration, valid legacy settings are copied atomically only when canonical settings do not already exist, and the legacy file is retained for rollback. Startup migration registers the canonical `UsageIndicatorForCodex` task first. A same-name legacy task may be deleted only when ownership is positively confirmed: it must contain exactly one executable action whose normalized, fully qualified path ends with `CodexUsageIndicator.exe` and whose argument is exactly `--background`. Unrecognized, ambiguous, multi-action, non-executable, malformed, or unreadable `CodexUsageIndicator` tasks are preserved, and canonical registration failure leaves the legacy task untouched. `--uninstall` always attempts to remove the canonical task and removes the legacy task only when it is recognized as owned. These manual file removals remain owned by the user; `--uninstall` does not delete them.
+Complete portable removal requires exiting the companion, running
+`--uninstall`, deleting its extracted files, and optionally deleting local
+settings at `%LOCALAPPDATA%\UsageIndicatorForCodex`. During legacy migration,
+valid settings are copied atomically only when canonical settings do not
+already exist, and legacy settings remain for rollback. A
+`CodexUsageIndicator` task is deleted only when its single executable action is
+a normalized fully qualified `CodexUsageIndicator.exe --background`; all
+unrecognized legacy forms are preserved.
 
 Uninstallation must not modify or repair Codex.
 
@@ -185,6 +231,10 @@ The design is satisfied when:
 12. The companion-owned Task Scheduler task is the external crash-recovery owner and restarts failed runs no more than three times at one-minute intervals after the user installs it.
 13. Canonical and explicitly legacy instance identities prevent the old and renamed applications from running simultaneously during migration.
 14. Canonical settings and startup registration win without being overwritten by legacy state.
+15. The installed CLI is the public update path; portable `update` is rejected and portable replacement remains manual.
+16. Both distributions contain repository-sourced `LICENSE.txt` without changing the four release asset names.
+17. Concurrent installed updates are rejected before network or process mutation.
+18. Startup ownership recognizes only the two exact canonical forms and the explicitly recognized legacy form; foreign tasks receive zero mutation.
 
 ## Implementation Gate
 

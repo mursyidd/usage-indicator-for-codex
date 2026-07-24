@@ -440,6 +440,11 @@ static void ParsesApplicationCommandsStrictly()
     AssertEqual(0, CommandLineOptions.Parse(["--help"]).ExitCode);
     AssertEqual(2, CommandLineOptions.Parse(["--unknown"]).ExitCode);
     AssertEqual(true, CommandLineOptions.Parse(["--unknown"]).Message.Contains(CommandLineOptions.Usage, StringComparison.Ordinal));
+    AssertEqual(
+        true,
+        CommandLineOptions.Usage.Contains(
+            "Portable updates are not supported; download and run the installer, or replace the complete portable directory manually.",
+            StringComparison.Ordinal));
 }
 
 static void SelectsStableUpdatesAndExactAssets()

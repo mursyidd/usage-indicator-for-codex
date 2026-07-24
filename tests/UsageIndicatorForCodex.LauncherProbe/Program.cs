@@ -141,6 +141,7 @@ static void VerifyLauncher(string launcherPath, LauncherLayout layout)
         }
         else
         {
+            VerifyRejectedPortableUpdate(disposableLauncher, testDirectory);
             VerifyAsynchronousCase(disposableLauncher, testDirectory, []);
             VerifyAsynchronousCase(disposableLauncher, testDirectory, ["--background"]);
         }
@@ -148,6 +149,39 @@ static void VerifyLauncher(string launcherPath, LauncherLayout layout)
     finally
     {
         Directory.Delete(testDirectory, recursive: true);
+    }
+}
+
+static void VerifyRejectedPortableUpdate(
+    string launcherPath,
+    string testDirectory)
+{
+    var outputPath = Path.Combine(testDirectory, $"arguments-{Guid.NewGuid():N}.json");
+    var startInfo = new ProcessStartInfo
+    {
+        FileName = launcherPath,
+        UseShellExecute = false,
+        RedirectStandardError = true
+    };
+    startInfo.ArgumentList.Add("update");
+    startInfo.Environment[ProbeEnvironment.Output] = outputPath;
+    using var process = Process.Start(startInfo)
+        ?? throw new InvalidOperationException("Portable update rejection could not be started.");
+    var standardError = process.StandardError.ReadToEnd();
+    if (!process.WaitForExit(10_000))
+    {
+        TryTerminate(process);
+        throw new TimeoutException("Portable update rejection did not exit.");
+    }
+
+    const string expectedMessage =
+        "Portable updates are not supported. Download and run the installer, or replace the complete portable directory manually.";
+    if (process.ExitCode != 2
+        || !string.Equals(standardError.Trim(), expectedMessage, StringComparison.Ordinal)
+        || File.Exists(outputPath))
+    {
+        throw new InvalidOperationException(
+            $"Portable update rejection returned {process.ExitCode}: {standardError.Trim()}");
     }
 }
 

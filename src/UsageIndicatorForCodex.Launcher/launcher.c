@@ -32,6 +32,10 @@
 #define LAUNCHER_ASYNC_ARGUMENT L"--background"
 #endif
 
+#ifndef LAUNCHER_REJECT_UPDATE
+#define LAUNCHER_REJECT_UPDATE 1
+#endif
+
 typedef unsigned short WORD;
 typedef unsigned long DWORD;
 typedef int BOOL;
@@ -129,6 +133,10 @@ static const WCHAR AsyncArgument[] = LAUNCHER_ASYNC_ARGUMENT;
 static const WCHAR NullDeviceName[] = L"NUL";
 static const char LaunchFailureMessage[] =
     "UsageIndicatorForCodex.exe could not start UsageIndicatorForCodex.Gui.exe.\r\n";
+#if LAUNCHER_REJECT_UPDATE
+static const char PortableUpdateErrorMessage[] =
+    "Portable updates are not supported. Download and run the installer, or replace the complete portable directory manually.\r\n";
+#endif
 
 static SIZE_T StringLength(LPCWSTR value)
 {
@@ -341,6 +349,23 @@ static void WriteLaunchFailure(void)
     }
 }
 
+#if LAUNCHER_REJECT_UPDATE
+static void WritePortableUpdateError(void)
+{
+    HANDLE errorHandle = GetStdHandle(STD_ERROR_HANDLE);
+    DWORD ignored;
+    if (errorHandle != NULL)
+    {
+        WriteFile(
+            errorHandle,
+            PortableUpdateErrorMessage,
+            (DWORD)(sizeof(PortableUpdateErrorMessage) - 1),
+            &ignored,
+            NULL);
+    }
+}
+#endif
+
 static void HideNewConsoleForDesktopLaunch(void)
 {
     DWORD processIds[2];
@@ -491,6 +516,15 @@ void WINAPI LauncherEntry(void)
         WriteLaunchFailure();
         ExitProcess(1);
     }
+
+#if LAUNCHER_REJECT_UPDATE
+    if (argumentCount == 2 && StringsEqual(arguments[1], L"update"))
+    {
+        WritePortableUpdateError();
+        LocalFree(arguments);
+        ExitProcess(2);
+    }
+#endif
 
     launcherPath = GetLauncherPath(heap);
     guiPath = launcherPath == NULL ? NULL : GetGuiPath(heap, launcherPath);

@@ -16,7 +16,9 @@ visible in Desktop.
 
 ## Requirements
 
-- Windows 11 x64. Windows 10 and Arm64 are not currently verified.
+- Windows 11 x64. The installer permits Windows 11 Arm64 through Windows x64
+  emulation, but Arm64 is not verified. Windows 10 is blocked by the installer
+  and is not supported.
 - Codex Desktop for the followed window.
 - A compatible Codex CLI authenticated with ChatGPT.
 - For development, a .NET SDK capable of targeting `net8.0-windows`.
@@ -59,7 +61,9 @@ preserves a matching PATH entry that existed before installation.
 The installer includes an optional **Start with Windows** checkbox. It is
 unchecked on a fresh installation, so startup remains an explicit opt-in. On
 upgrade, the installer asks the existing installed CLI for its recognized
-startup state and initializes the checkbox from that result.
+startup state and initializes the checkbox from that result. If status is
+`startup: unrecognized`, the checkbox is unchecked and disabled, a collision
+warning is shown, and the installer makes no startup change.
 
 If the old CLI is unavailable, too old, malformed, or cannot complete status
 inspection, the installer preserves the existing startup state. It changes
@@ -117,11 +121,14 @@ startup: enabled|disabled|unrecognized
 A complete status inspection returns exit code `0`, including when the
 application is stopped. Settings or Task Scheduler inspection failures return
 exit code `1`. A colliding canonical or legacy task whose action cannot prove
-ownership is reported as `unrecognized`.
+ownership is reported as `unrecognized`. Startup ownership collisions return
+exit code `2`; operational inspection or mutation failures return exit code
+`1`.
 
 `stop`, `enable-startup`, and `disable-startup` are idempotent. Invalid,
-duplicate, combined, or incorrectly cased verbs return exit code 2 and do not
-start the companion.
+duplicate, combined, or incorrectly cased verbs return exit code `2` and do not
+start the companion. The portable launcher's unsupported `update` verb also
+returns `2`.
 
 `UsageIndicatorForCodex.Gui.exe` is the WPF application and managed command
 host. It is not normally invoked directly.
@@ -139,16 +146,24 @@ Scheduler logon task. The task launches
 `UsageIndicatorForCodex.Gui.exe --background`, has no execution-time limit, and
 retries a crash up to three times at one-minute intervals.
 
+For compatibility, ownership inspection also recognizes the previous canonical
+form when the same task launches the exact sibling
+`UsageIndicatorForCodex.exe --background` in the GUI application directory.
+`enable-startup` migrates that recognized launcher-backed task to the direct GUI
+form. A same-name executable in any other directory is foreign.
+
 Disable startup without deleting settings or application files:
 
 ```powershell
 usage-indicator disable-startup
 ```
 
-The command removes the canonical task. It removes a legacy task named
-`CodexUsageIndicator` only when its action is the recognized
-`CodexUsageIndicator.exe --background`; an unrelated same-name task is
-preserved.
+The command and uninstaller remove only positively recognized owned tasks. They
+preserve foreign canonical tasks and preserve a legacy task named
+`CodexUsageIndicator` unless its action is the recognized
+`CodexUsageIndicator.exe --background`. Mixed owned/foreign inventories remove
+the owned entries, preserve the foreign entries, and report an ownership
+collision.
 
 ## Updates
 
@@ -167,7 +182,15 @@ reports availability. It does not download or install anything.
 The updater never copies over installed application files, supplies no silent
 installer flags, and has no timer, service, or automatic background path.
 Development builds without an explicitly configured GitHub repository URL fail
-closed instead of guessing an owner.
+closed instead of guessing an owner. A distinct per-user update mutex is
+acquired before release metadata is requested and held through installer
+launch. A concurrent `usage-indicator update` exits with code `1` and:
+
+```text
+An update is already in progress.
+```
+
+`usage-indicator check-update` does not acquire that mutex.
 
 ## Portable distribution
 
@@ -178,6 +201,9 @@ The portable ZIP remains a secondary distribution:
 2. Verify the exact filename and SHA-256.
 3. Extract the complete ZIP to a permanent directory.
 4. Launch `UsageIndicatorForCodex.exe`.
+
+The ZIP root contains `LICENSE.txt`, copied from the repository `LICENSE`. The
+installer displays the same license and installs it as `app\LICENSE.txt`.
 
 The portable native console launcher remains compatible:
 
@@ -192,12 +218,16 @@ UsageIndicatorForCodex.exe --revalidate-cli
 UsageIndicatorForCodex.exe --exit          Stop a canonical running instance
 UsageIndicatorForCodex.exe --help
 UsageIndicatorForCodex.exe -h              Show help
+UsageIndicatorForCodex.exe update          Unsupported; exits 2 without updating
 ```
 
 Except for no arguments and `--background`, the launcher waits for the WPF
 command process so PowerShell receives complete output and the correct exit
-code. Portable updates are manual: stop the process, replace the complete
-extracted directory, and re-enable startup if its path changed.
+code. `UsageIndicatorForCodex.exe update` does not migrate or update the
+portable directory; it fails with a clear explanation. Portable updates are
+manual: stop the process, replace the complete extracted directory, and
+re-enable startup if its path changed. Users who want managed updates should
+move to the recommended installer distribution.
 
 ## Legacy migration
 
@@ -369,8 +399,8 @@ usage-indicator-for-codex-v0.1.0-win-x64.zip.sha256
 
 For an installed copy:
 
-1. Optionally run `usage-indicator disable-startup`; the uninstaller also does
-   this.
+1. Optionally run `usage-indicator disable-startup`; the uninstaller also asks
+   the installed CLI to remove only positively recognized owned startup tasks.
 2. Open **Settings > Apps > Installed apps**, choose **Usage Indicator for
    Codex**, and select **Uninstall**.
 3. The uninstaller removes application files and only the PATH entry recorded
@@ -408,9 +438,10 @@ See [SECURITY.md](SECURITY.md) for reporting and the complete trust boundary.
   manual Windows verification.
 - A same-release checksum is integrity evidence, not independent publisher
   authentication.
-- Windows 10 and Arm64 are not currently claimed.
+- Windows 10 is unsupported. Windows 11 Arm64 installation is permitted only
+  through x64 emulation and remains unverified.
 
 ## Contributing and license
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). This project is licensed under the
-[MIT License](LICENSE).
+[MIT License](LICENSE); `LICENSE.txt` is included in both distributed packages.

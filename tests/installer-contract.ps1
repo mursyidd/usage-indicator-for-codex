@@ -14,6 +14,7 @@ $requiredFragments = @(
     'DefaultDirName={localappdata}\Programs\UsageIndicatorForCodex',
     'PrivilegesRequired=lowest',
     'ArchitecturesAllowed=x64compatible',
+    'MinVersion=10.0.22000',
     '#ifndef RepositoryLicensePath',
     '#error RepositoryLicensePath must be defined.',
     'LicenseFile={#RepositoryLicensePath}',
