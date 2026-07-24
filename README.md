@@ -16,19 +16,22 @@ visible in Desktop.
 
 ## Requirements
 
-- Windows 11 x64. The installer permits Windows 11 Arm64 through Windows x64
-  emulation, but Arm64 is not verified. Windows 10 is blocked by the installer
-  and is not supported.
+- Windows 11 x64.
+  - Windows 11 Arm64 may work through Windows x64 emulation, but it has not
+    been verified.
+  - Windows 10, macOS, and Linux are not supported.
 - Codex Desktop for the followed window.
 - A compatible Codex CLI authenticated with ChatGPT.
-- For development, a .NET SDK capable of targeting `net8.0-windows`.
-- For native launcher builds, the x64 MSVC compiler, linker, and library
-  manager.
-- For installer builds, Inno Setup 6.
 
 The installer contains a self-contained `win-x64` build. It does not require a
 separate .NET runtime and does not install or update .NET, Codex CLI, or Codex
 Desktop.
+
+### Development requirements
+
+- A .NET SDK capable of targeting `net8.0-windows`.
+- The x64 MSVC compiler, linker, and library manager for native launcher builds.
+- Inno Setup 6 for installer builds.
 
 ## Installation
 
