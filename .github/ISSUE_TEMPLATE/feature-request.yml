@@ -1,0 +1,62 @@
+name: Feature request
+description: Suggest an improvement to the overlay, installer, CLI, startup, or update experience.
+title: "[Feature] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first. Describe the problem before proposing a particular implementation.
+  - type: checkboxes
+    id: searched-existing-requests
+    attributes:
+      label: Existing requests
+      options:
+        - label: I searched existing issues for this request.
+          required: true
+  - type: textarea
+    id: problem-or-limitation
+    attributes:
+      label: Problem or limitation
+      description: What problem or limitation are you encountering?
+    validations:
+      required: true
+  - type: textarea
+    id: desired-outcome
+    attributes:
+      label: Desired outcome
+      description: What would you like to be able to do?
+    validations:
+      required: true
+  - type: dropdown
+    id: affected-surface
+    attributes:
+      label: Affected surface
+      options:
+        - Overlay display
+        - Usage information
+        - CLI
+        - Installation
+        - Start with Windows
+        - Updates
+        - Uninstall
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-behaviour
+    attributes:
+      label: Proposed behaviour
+  - type: textarea
+    id: alternatives-or-workarounds
+    attributes:
+      label: Alternatives or workarounds
+  - type: checkboxes
+    id: product-boundary
+    attributes:
+      label: Product boundary
+      description: The current product does not modify Codex Desktop, does not read Codex Desktop credentials, does not substitute OpenAI Platform API billing or usage data, and supports Windows 11 only; Arm64 is unverified through x64 emulation. Suggestions within or beyond these boundaries are welcome.
+      options:
+        - label: I understand these current product boundaries.
+          required: true

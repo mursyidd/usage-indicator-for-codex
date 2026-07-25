@@ -138,6 +138,74 @@ catch {
 $commandSource = Get-Content -LiteralPath (
     Join-Path $repositoryRoot 'src\UsageIndicatorForCodex\CommandLineOptions.cs') -Raw
 $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw
+$readmeHeading = '# Usage Indicator for Codex'
+$readmeHeadingIndex = $readme.IndexOf($readmeHeading, [StringComparison]::Ordinal)
+$readmeIntroductionIndex = $readme.IndexOf(
+    'Usage Indicator for Codex is an independent Windows companion',
+    [StringComparison]::Ordinal)
+if ($readmeHeadingIndex -lt 0 -or
+    $readmeIntroductionIndex -lt 0 -or
+    $readmeIntroductionIndex -le $readmeHeadingIndex) {
+    throw 'README must contain an H1 followed by the introductory product paragraph.'
+}
+$badgeAreaStart = $readmeHeadingIndex + $readmeHeading.Length
+$badgeArea = $readme.Substring(
+    $badgeAreaStart,
+    $readmeIntroductionIndex - $badgeAreaStart)
+$badgeContracts = [ordered]@{
+    'CI' = [pscustomobject]@{
+        Source = 'https://github\.com/mursyidd/usage-indicator-for-codex/actions/workflows/ci\.yml/badge\.svg\?[^)\s\r\n]*'
+        Destination = 'https://github\.com/mursyidd/usage-indicator-for-codex/actions/workflows/ci\.yml(?=\s*\))'
+        RequiredSourceFragment = 'branch=master'
+    }
+    'Latest Release' = [pscustomobject]@{
+        Source = 'https://img\.shields\.io/github/v/release/mursyidd/usage-indicator-for-codex(?:\?[^)\s\r\n]*)?'
+        Destination = 'https://github\.com/mursyidd/usage-indicator-for-codex/releases/latest(?=\s*\))'
+        RequiredSourceFragment = $null
+    }
+    'MIT licence' = [pscustomobject]@{
+        Source = 'https://img\.shields\.io/github/license/mursyidd/usage-indicator-for-codex(?:\?[^)\s\r\n]*)?'
+        Destination = '(?<![A-Za-z0-9_./-])(?:\./)?LICENSE(?=\s*\))'
+        RequiredSourceFragment = $null
+    }
+}
+foreach ($badgeContract in $badgeContracts.GetEnumerator()) {
+    $sourceMatches = @([regex]::Matches(
+        $badgeArea,
+        $badgeContract.Value.Source,
+        [Text.RegularExpressions.RegexOptions]::IgnoreCase))
+    $destinationMatches = @([regex]::Matches(
+        $badgeArea,
+        $badgeContract.Value.Destination,
+        [Text.RegularExpressions.RegexOptions]::IgnoreCase))
+    if ($sourceMatches.Count -ne 1 -or $destinationMatches.Count -ne 1) {
+        throw "README badge area must contain exactly one $($badgeContract.Key) source and destination."
+    }
+    if ($null -ne $badgeContract.Value.RequiredSourceFragment -and
+        $sourceMatches[0].Value.IndexOf(
+            $badgeContract.Value.RequiredSourceFragment,
+            [StringComparison]::Ordinal) -lt 0) {
+        throw "README $($badgeContract.Key) badge source must contain $($badgeContract.Value.RequiredSourceFragment)."
+    }
+}
+foreach ($forbiddenBadgeConcept in @(
+    'downloads',
+    'stars',
+    'forks',
+    'Windows version',
+    '.NET runtime',
+    'build size',
+    'OpenAI',
+    'ChatGPT',
+    'official Codex'
+)) {
+    if ([regex]::IsMatch(
+        $readme.Substring($readmeHeadingIndex, $readmeIntroductionIndex - $readmeHeadingIndex),
+        [regex]::Escape($forbiddenBadgeConcept),
+        [Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+        throw "README badge row contains a forbidden concept: $forbiddenBadgeConcept"
+    }
+}
 $requiredReadmeOrder = @(
     '## Installation',
     '## Quick start',
@@ -355,6 +423,133 @@ foreach ($forbiddenReadmeFragment in @(
 }
 if ($readme -cmatch '(?im)^(?!.*\bdo not\b).*\b(?:disable|turn off)\s+(?:Microsoft Defender\s+)?SmartScreen\b') {
     throw 'README instructs users to disable SmartScreen.'
+}
+
+$issueTemplateDirectory = Join-Path $repositoryRoot '.github\ISSUE_TEMPLATE'
+$bugReportPath = Join-Path $issueTemplateDirectory 'bug-report.yml'
+$featureRequestPath = Join-Path $issueTemplateDirectory 'feature-request.yml'
+$issueConfigPath = Join-Path $issueTemplateDirectory 'config.yml'
+foreach ($issueTemplatePath in @($bugReportPath, $featureRequestPath, $issueConfigPath)) {
+    if (-not (Test-Path -LiteralPath $issueTemplatePath -PathType Leaf)) {
+        throw "Required GitHub issue template is missing: $issueTemplatePath"
+    }
+}
+
+$issueConfig = Get-Content -LiteralPath $issueConfigPath -Raw
+foreach ($requiredIssueConfigFragment in @(
+    'blank_issues_enabled: false',
+    'https://github.com/mursyidd/usage-indicator-for-codex/security/policy',
+    'https://github.com/mursyidd/usage-indicator-for-codex#troubleshooting'
+)) {
+    if ($issueConfig.IndexOf($requiredIssueConfigFragment, [StringComparison]::Ordinal) -lt 0) {
+        throw "Issue chooser is missing required configuration: $requiredIssueConfigFragment"
+    }
+}
+
+$issueForms = [ordered]@{
+    'bug-report.yml' = Get-Content -LiteralPath $bugReportPath -Raw
+    'feature-request.yml' = Get-Content -LiteralPath $featureRequestPath -Raw
+}
+$supportedIssueFormComponentTypes = @('markdown', 'checkboxes', 'dropdown', 'input', 'textarea')
+foreach ($issueFormEntry in $issueForms.GetEnumerator()) {
+    $issueForm = $issueFormEntry.Value
+    if ($issueForm -match "`t") {
+        throw "$($issueFormEntry.Key) must use spaces instead of tabs."
+    }
+    if (@([regex]::Matches($issueForm, '(?m)^body:\s*$')).Count -ne 1) {
+        throw "$($issueFormEntry.Key) must contain exactly one top-level body block."
+    }
+    $componentTypes = @([regex]::Matches($issueForm, '(?m)^  - type:\s+([^\r\n]+)\s*$') |
+        ForEach-Object { $_.Groups[1].Value.Trim() })
+    if ($componentTypes.Count -eq 0 -or
+        @($componentTypes | Where-Object { $_ -notin $supportedIssueFormComponentTypes }).Count -ne 0) {
+        throw "$($issueFormEntry.Key) uses an unsupported Issue Forms component type."
+    }
+    $componentIds = @([regex]::Matches($issueForm, '(?m)^    id:\s+([^\r\n]+)\s*$') |
+        ForEach-Object { $_.Groups[1].Value.Trim() })
+    if ($componentIds.Count -ne @($componentIds | Select-Object -Unique).Count) {
+        throw "$($issueFormEntry.Key) contains duplicate component IDs."
+    }
+    foreach ($requiredIssueFormFragment in @('name:', 'description:', 'attributes:')) {
+        if ($issueForm.IndexOf($requiredIssueFormFragment, [StringComparison]::Ordinal) -lt 0) {
+            throw "$($issueFormEntry.Key) is missing required Issue Forms structure: $requiredIssueFormFragment"
+        }
+    }
+}
+
+foreach ($requiredBugReportFragment in @(
+    'Application version',
+    'usage-indicator version',
+    'usage-indicator status',
+    'Windows environment',
+    'Codex environment',
+    'Actual behaviour',
+    'Expected behaviour',
+    'Reproduction steps',
+    'Secret safety',
+    'security-reporting process',
+    'CODEX_CLI_PATH'
+)) {
+    if ($issueForms['bug-report.yml'].IndexOf($requiredBugReportFragment, [StringComparison]::Ordinal) -lt 0) {
+        throw "Bug report form is missing required diagnostic or safety field: $requiredBugReportFragment"
+    }
+}
+if ($issueForms['bug-report.yml'] -match '(?m)^  - type: dropdown\r?\n    id: application-version\s*$') {
+    throw 'Bug report form must not hardcode product version as a dropdown.'
+}
+
+foreach ($requiredFeatureRequestFragment in @(
+    'Existing requests',
+    'Problem or limitation',
+    'What problem or limitation are you encountering?',
+    'Desired outcome',
+    'What would you like to be able to do?',
+    'Affected surface',
+    'Product boundary',
+    'does not modify Codex Desktop',
+    'does not read Codex Desktop credentials',
+    'does not substitute OpenAI Platform API billing or usage data',
+    'Arm64 is unverified through x64 emulation'
+)) {
+    if ($issueForms['feature-request.yml'].IndexOf($requiredFeatureRequestFragment, [StringComparison]::Ordinal) -lt 0) {
+        throw "Feature request form is missing required field or boundary: $requiredFeatureRequestFragment"
+    }
+}
+$featureProblemIndex = $issueForms['feature-request.yml'].IndexOf('Problem or limitation', [StringComparison]::Ordinal)
+$featureProposedBehaviourIndex = $issueForms['feature-request.yml'].IndexOf('Proposed behaviour', [StringComparison]::Ordinal)
+if ($featureProblemIndex -lt 0 -or $featureProposedBehaviourIndex -lt 0 -or $featureProblemIndex -ge $featureProposedBehaviourIndex) {
+    throw 'Feature request form must ask about the problem before a proposed solution.'
+}
+
+foreach ($issueFormEntry in $issueForms.GetEnumerator()) {
+    if ([regex]::IsMatch(
+        $issueFormEntry.Value,
+        '(?im)^\s*(?:description|placeholder|value):.*\b(?:paste|enter|provide|share|attach)\b.*\b(?:token|api key|password|credential file|browser (?:data|profile)|(?:private )?account email)\b')) {
+        throw "$($issueFormEntry.Key) requests sensitive diagnostic content."
+    }
+}
+
+$socialPreviewPath = Join-Path $repositoryRoot 'docs\images\usage-indicator-social-preview.png'
+if (-not (Test-Path -LiteralPath $socialPreviewPath -PathType Leaf)) {
+    throw 'Social-preview image is missing.'
+}
+$socialPreviewBytes = [IO.File]::ReadAllBytes($socialPreviewPath)
+$pngSignature = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+if ($socialPreviewBytes.Length -lt 24 -or
+    -not [Linq.Enumerable]::SequenceEqual([byte[]]$pngSignature, [byte[]]$socialPreviewBytes[0..7])) {
+    throw 'Social-preview image must have a valid PNG signature.'
+}
+$socialPreviewWidth = [System.BitConverter]::ToUInt32(
+    [byte[]]@($socialPreviewBytes[19], $socialPreviewBytes[18], $socialPreviewBytes[17], $socialPreviewBytes[16]),
+    0)
+$socialPreviewHeight = [System.BitConverter]::ToUInt32(
+    [byte[]]@($socialPreviewBytes[23], $socialPreviewBytes[22], $socialPreviewBytes[21], $socialPreviewBytes[20]),
+    0)
+if ($socialPreviewWidth -ne 1280 -or $socialPreviewHeight -ne 640) {
+    throw "Social-preview image dimensions must be 1280x640; found ${socialPreviewWidth}x${socialPreviewHeight}."
+}
+if ($socialPreviewBytes.Length -ge 1MB) {
+    throw 'Social-preview image must be smaller than 1 MB.'
 }
 
 $releaseAssetScript = Get-Content -LiteralPath (

@@ -1,0 +1,106 @@
+name: Bug report
+description: Report a reproducible problem with installation, commands, usage display, startup, or updates.
+title: "[Bug] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues and check the README Troubleshooting section first. Report vulnerabilities through the private security-reporting process in SECURITY.md, not this public form.
+  - type: checkboxes
+    id: searched-existing-issues
+    attributes:
+      label: Existing issues
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+  - type: dropdown
+    id: problem-area
+    attributes:
+      label: Problem area
+      options:
+        - Installation
+        - CLI command
+        - Usage unavailable
+        - Overlay visibility or placement
+        - Displayed account or usage
+        - Reset time
+        - Start with Windows
+        - Update
+        - Uninstall
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: application-version
+    attributes:
+      label: Application version
+      description: Run `usage-indicator version` and include its output.
+      placeholder: usage-indicator version
+    validations:
+      required: true
+  - type: textarea
+    id: status-output
+    attributes:
+      label: Status output
+      description: Run `usage-indicator status` and include its output.
+      placeholder: usage-indicator status
+    validations:
+      required: true
+  - type: textarea
+    id: windows-environment
+    attributes:
+      label: Windows environment
+      placeholder: |
+        Windows edition/version:
+        Architecture: x64 or Arm64:
+    validations:
+      required: true
+  - type: textarea
+    id: codex-environment
+    attributes:
+      label: Codex environment
+      placeholder: |
+        Codex Desktop version:
+        Codex CLI version:
+        Codex CLI path:
+        Authentication type: ChatGPT, API key, or unknown:
+    validations:
+      required: true
+  - type: textarea
+    id: actual-behaviour
+    attributes:
+      label: Actual behaviour
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behaviour
+    attributes:
+      label: Expected behaviour
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Screenshots or additional context
+      description: Drag and drop screenshots or other non-sensitive attachments here.
+  - type: checkboxes
+    id: secret-safety
+    attributes:
+      label: Secret safety
+      description: Command versions, `usage-indicator status`, Windows information, and `CODEX_CLI_PATH` are appropriate diagnostics.
+      options:
+        - label: This report does not include ChatGPT tokens, API keys, Codex credential files, browser data, authentication secrets, or private account information.
+          required: true

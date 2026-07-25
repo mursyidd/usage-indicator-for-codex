@@ -1,5 +1,7 @@
 # Usage Indicator for Codex
 
+[![CI](https://github.com/mursyidd/usage-indicator-for-codex/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/mursyidd/usage-indicator-for-codex/actions/workflows/ci.yml) [![Latest Release](https://img.shields.io/github/v/release/mursyidd/usage-indicator-for-codex?display_name=tag&sort=semver)](https://github.com/mursyidd/usage-indicator-for-codex/releases/latest) [![License: MIT](https://img.shields.io/github/license/mursyidd/usage-indicator-for-codex)](LICENSE)
+
 Usage Indicator for Codex is an independent Windows companion that displays the
 most restrictive active Codex usage limit over a Codex Desktop title bar. It
 uses the Desktop window only for placement and does not modify the signed Codex
