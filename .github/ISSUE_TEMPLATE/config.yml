@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Security vulnerability
+    url: https://github.com/mursyidd/usage-indicator-for-codex/security/policy
+    about: Report security vulnerabilities through the private process described in SECURITY.md.
   - name: Troubleshooting
     url: https://github.com/mursyidd/usage-indicator-for-codex#troubleshooting
     about: Check installation, usage, visibility, startup, and update guidance first.
