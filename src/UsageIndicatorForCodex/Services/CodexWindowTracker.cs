@@ -219,8 +219,9 @@ internal sealed class CodexWindowTracker : IDisposable
         return SelectInitialAttachedWindow(windows, IsEligibleCodexWindow);
     }
 
-    internal static bool IsCodexDesktopMainWindow(string processName, string packageFamilyName, string windowTitle) =>
-        string.Equals(processName, "ChatGPT", StringComparison.OrdinalIgnoreCase)
+    internal static bool IsCodexDesktopMainWindow(string processName, string packageFamilyName, string windowTitle, nint extendedWindowStyle) =>
+        (extendedWindowStyle & NativeMethods.WsExToolWindow) == 0
+        && string.Equals(processName, "ChatGPT", StringComparison.OrdinalIgnoreCase)
         && string.Equals(packageFamilyName, CodexPackageFamilyName, StringComparison.OrdinalIgnoreCase)
         && (string.Equals(windowTitle, "Codex", StringComparison.Ordinal)
             || string.Equals(windowTitle, "ChatGPT", StringComparison.Ordinal));
@@ -242,7 +243,11 @@ internal sealed class CodexWindowTracker : IDisposable
         {
             using var process = Process.GetProcessById((int)processId);
             return NativeMethods.TryGetPackageFamilyName(process.Handle, out var packageFamilyName)
-                && IsCodexDesktopMainWindow(process.ProcessName, packageFamilyName, NativeMethods.ReadWindowText(hwnd));
+                && IsCodexDesktopMainWindow(
+                    process.ProcessName,
+                    packageFamilyName,
+                    NativeMethods.ReadWindowText(hwnd),
+                    NativeMethods.GetWindowLongPtr(hwnd, NativeMethods.GwlExStyle));
         }
         catch (ArgumentException)
         {

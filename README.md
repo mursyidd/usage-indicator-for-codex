@@ -532,8 +532,8 @@ and contribution requirements.
 - Desktop and CLI account identities are not automatically correlated.
 - Only the configured CLI account's ChatGPT-plan limits are shown; OpenAI
   Platform API usage is not substituted.
-- Window detection depends on current Codex Desktop process, package, and title
-  conventions.
+- Window detection depends on current Codex Desktop process, package, title, and
+  native window-role conventions.
 - Builds are unsigned; SmartScreen and clean-machine installer behavior require
   manual Windows verification.
 - A same-release checksum is integrity evidence, not independent publisher

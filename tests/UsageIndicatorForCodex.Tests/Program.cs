@@ -1,5 +1,6 @@
 using UsageIndicatorForCodex;
 using UsageIndicatorForCodex.Core;
+using UsageIndicatorForCodex.Interop;
 using UsageIndicatorForCodex.Services;
 using UsageIndicatorForCodex.Views;
 using System.Diagnostics;
@@ -120,6 +121,7 @@ var checks = new (string Name, Action Run)[]
     ("ignores overlay location events while tracking the attached Codex window", IgnoresOverlayLocationEvents),
     ("observes attached Codex windows being hidden", ObservesAttachedWindowHide),
     ("identifies the Codex Desktop window by package identity", IdentifiesCodexDesktopWindow),
+    ("rejects Codex companion tool windows", RejectsCodexCompanionToolWindows),
     ("selects the most recently active Codex window on startup", SelectsInitialAttachedWindow),
     ("rejects expired-only usage windows", RejectsExpiredWindows),
     ("parses primary and secondary app-server limits", ParsesRateLimitResponse),
@@ -952,11 +954,19 @@ static void ObservesAttachedWindowHide()
 
 static void IdentifiesCodexDesktopWindow()
 {
-    AssertEqual(true, CodexWindowTracker.IsCodexDesktopMainWindow("ChatGPT", CodexWindowTracker.CodexPackageFamilyName, "Codex"));
-    AssertEqual(true, CodexWindowTracker.IsCodexDesktopMainWindow("ChatGPT", CodexWindowTracker.CodexPackageFamilyName, "ChatGPT"));
-    AssertEqual(false, CodexWindowTracker.IsCodexDesktopMainWindow("ChatGPT", "OpenAI.ChatGPT_2p2nqsd0c76g0", "Codex"));
-    AssertEqual(false, CodexWindowTracker.IsCodexDesktopMainWindow("ChatGPT", CodexWindowTracker.CodexPackageFamilyName, "Other window"));
-    AssertEqual(false, CodexWindowTracker.IsCodexDesktopMainWindow("Codex", CodexWindowTracker.CodexPackageFamilyName, "Codex"));
+    AssertEqual(true, CodexWindowTracker.IsCodexDesktopMainWindow("ChatGPT", CodexWindowTracker.CodexPackageFamilyName, "Codex", 0));
+    AssertEqual(true, CodexWindowTracker.IsCodexDesktopMainWindow("ChatGPT", CodexWindowTracker.CodexPackageFamilyName, "ChatGPT", 0));
+    AssertEqual(false, CodexWindowTracker.IsCodexDesktopMainWindow("ChatGPT", "OpenAI.ChatGPT_2p2nqsd0c76g0", "Codex", 0));
+    AssertEqual(false, CodexWindowTracker.IsCodexDesktopMainWindow("ChatGPT", CodexWindowTracker.CodexPackageFamilyName, "Other window", 0));
+    AssertEqual(false, CodexWindowTracker.IsCodexDesktopMainWindow("Codex", CodexWindowTracker.CodexPackageFamilyName, "Codex", 0));
+}
+
+static void RejectsCodexCompanionToolWindows()
+{
+    AssertEqual(false, CodexWindowTracker.IsCodexDesktopMainWindow(
+        "ChatGPT", CodexWindowTracker.CodexPackageFamilyName, "Codex", NativeMethods.WsExToolWindow));
+    AssertEqual(false, CodexWindowTracker.IsCodexDesktopMainWindow(
+        "ChatGPT", CodexWindowTracker.CodexPackageFamilyName, "ChatGPT", NativeMethods.WsExToolWindow));
 }
 
 static void SelectsInitialAttachedWindow()

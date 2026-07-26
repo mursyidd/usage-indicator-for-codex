@@ -129,7 +129,7 @@ It must:
 - have no taskbar icon;
 - stay out of Alt+Tab;
 - avoid taking keyboard focus;
-- identify an eligible Codex Desktop main window through its `ChatGPT.exe` process name, `OpenAI.Codex_2p2nqsd0c76g0` package family, and `Codex` or `ChatGPT` window title, without reading package files;
+- identify an eligible Codex Desktop main window through its `ChatGPT.exe` process name, `OpenAI.Codex_2p2nqsd0c76g0` package family, `Codex` or `ChatGPT` window title, and a non-tool-window native role, without reading package files;
 - track Codex movement, resizing, minimization, restoration, and DPI changes;
 - attach to the most recently foregrounded eligible Codex main window and remain attached while that window is visible, even when another application has focus;
 - on companion startup, discover the first eligible Codex main window in top-level Windows z-order so it can attach even when another application is already foreground;
