@@ -7,6 +7,7 @@
     <RootNamespace>UsageIndicatorForCodex</RootNamespace>
     <Product>Usage Indicator for Codex</Product>
     <Description>Displays Codex CLI account usage over the Codex Desktop title bar.</Description>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>

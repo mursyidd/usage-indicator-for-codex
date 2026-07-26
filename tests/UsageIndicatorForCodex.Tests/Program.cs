@@ -97,6 +97,7 @@ var checks = new (string Name, Action Run)[]
     ("formats reset timestamps in the local timezone without a zone label", FormatsLocalTime),
     ("selects every responsive layout", SelectsResponsiveLayouts),
     ("sizes the full overlay to its rendered content", SizesFullOverlayToContent),
+    ("keeps overlay placement deterministic across monitor DPI changes", KeepsOverlayPlacementDeterministicAcrossDpiChanges),
     ("measures layouts against available title-bar space", MeasuresLayoutsAgainstAvailableWidth),
     ("coalesces overlapping refresh requests", CoalescesOverlappingRefreshRequests),
     ("cancels and replaces refresh requests", CancelsAndReplacesRefreshRequests),
@@ -305,6 +306,100 @@ static void SizesFullOverlayToContent()
             {
                 throw new InvalidOperationException($"Expected content-sized width below 455; received {overlay.Width}.");
             }
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    thread.Join();
+
+    if (failure is not null)
+    {
+        throw failure;
+    }
+}
+
+static void KeepsOverlayPlacementDeterministicAcrossDpiChanges()
+{
+    Exception? failure = null;
+    var thread = new Thread(() =>
+    {
+        try
+        {
+            var overlay = new UsageOverlayWindow();
+            AssertEqual(ResizeMode.NoResize, overlay.ResizeMode);
+            AssertEqual(30d, overlay.Height);
+            AssertEqual(30d, overlay.MinHeight);
+            AssertEqual(30d, overlay.MaxHeight);
+
+            var snapshot = new UsageSnapshot(
+                "account",
+                53,
+                new DateTimeOffset(2026, 7, 29, 0, 23, 0, TimeSpan.Zero));
+            AssertEqual(
+                OverlayLayout.Full,
+                overlay.Render(IndicatorState.Available, snapshot, double.PositiveInfinity));
+            var renderedWidthDip = overlay.Width;
+
+            var landscape = new NativeMethods.Rect
+            {
+                Left = 0,
+                Top = 0,
+                Right = 1920,
+                Bottom = 1080
+            };
+            var settings = new UserSettings(true, 0, 6);
+            var at96Dpi = UsageOverlayWindow.CalculatePlacement(
+                landscape,
+                settings,
+                renderedWidthDip,
+                96);
+            var widthAt96Dpi = (int)Math.Ceiling(renderedWidthDip);
+            AssertEqual(
+                new OverlayPlacement(
+                    (landscape.Width - widthAt96Dpi) / 2,
+                    6,
+                    widthAt96Dpi,
+                    30),
+                at96Dpi);
+            AssertEqual(
+                at96Dpi,
+                UsageOverlayWindow.CalculatePlacement(landscape, settings, renderedWidthDip, 0));
+
+            var portrait = new NativeMethods.Rect
+            {
+                Left = -1440,
+                Top = -1840,
+                Right = 0,
+                Bottom = 720
+            };
+            var portraitSettings = new UserSettings(true, -12, 6);
+            var at120Dpi = UsageOverlayWindow.CalculatePlacement(
+                portrait,
+                portraitSettings,
+                renderedWidthDip,
+                120);
+            var widthAt120Dpi = (int)Math.Ceiling(renderedWidthDip * 1.25);
+            AssertEqual(
+                new OverlayPlacement(
+                    portrait.Left + (portrait.Width - widthAt120Dpi) / 2 - 15,
+                    portrait.Top + 8,
+                    widthAt120Dpi,
+                    38),
+                at120Dpi);
+
+            overlay.Width = 999;
+            overlay.Height = 999;
+            AssertEqual(
+                at120Dpi,
+                UsageOverlayWindow.CalculatePlacement(
+                    portrait,
+                    portraitSettings,
+                    renderedWidthDip,
+                    120));
         }
         catch (Exception exception)
         {

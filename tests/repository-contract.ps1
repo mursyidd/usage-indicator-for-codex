@@ -740,4 +740,25 @@ foreach ($fragment in @(
     }
 }
 
+$applicationProjectPath = Join-Path $repositoryRoot 'src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj'
+$applicationManifestPath = Join-Path $repositoryRoot 'src\UsageIndicatorForCodex\app.manifest'
+$applicationProject = Get-Content -LiteralPath $applicationProjectPath -Raw
+if ($applicationProject.IndexOf(
+    '<ApplicationManifest>app.manifest</ApplicationManifest>',
+    [StringComparison]::Ordinal) -lt 0) {
+    throw 'The managed application project must embed app.manifest.'
+}
+if (-not (Test-Path -LiteralPath $applicationManifestPath -PathType Leaf)) {
+    throw 'The managed application manifest is missing.'
+}
+$applicationManifest = Get-Content -LiteralPath $applicationManifestPath -Raw
+foreach ($requiredManifestFragment in @(
+    '<dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>',
+    '<dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>'
+)) {
+    if ($applicationManifest.IndexOf($requiredManifestFragment, [StringComparison]::Ordinal) -lt 0) {
+        throw "The managed application manifest is missing DPI contract: $requiredManifestFragment"
+    }
+}
+
 Write-Output 'PASS repository ignore, local preservation, version, commands, documentation, and release contract'

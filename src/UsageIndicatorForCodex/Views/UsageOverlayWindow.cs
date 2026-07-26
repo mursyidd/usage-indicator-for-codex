@@ -9,8 +9,11 @@ using UsageIndicatorForCodex.Services;
 
 namespace UsageIndicatorForCodex.Views;
 
+internal readonly record struct OverlayPlacement(int X, int Y, int Width, int Height);
+
 internal sealed class UsageOverlayWindow : Window
 {
+    private const double OverlayHeightDip = 30d;
     private readonly Border _container;
     private readonly Border _barFill;
     private readonly Border _barTrack;
@@ -21,17 +24,21 @@ internal sealed class UsageOverlayWindow : Window
     private readonly Border _barToSeparatorSpacer;
     private readonly Border _separatorToDateSpacer;
     private OverlayLayout _layout;
+    private double _renderedWidthDip;
     private bool _clickable;
 
     public UsageOverlayWindow()
     {
         WindowStyle = WindowStyle.None;
+        ResizeMode = ResizeMode.NoResize;
         AllowsTransparency = true;
         Background = Brushes.Transparent;
         ShowInTaskbar = false;
         ShowActivated = false;
         Focusable = false;
-        Height = 30;
+        Height = OverlayHeightDip;
+        MinHeight = OverlayHeightDip;
+        MaxHeight = OverlayHeightDip;
 
         _usageLabel = NewTextBlock();
         _dateLabel = NewTextBlock();
@@ -107,8 +114,9 @@ internal sealed class UsageOverlayWindow : Window
         {
             ApplyLayout(state, snapshot, layout);
             _container.InvalidateMeasure();
-            _container.Measure(new Size(double.PositiveInfinity, Height));
-            Width = Math.Ceiling(_container.DesiredSize.Width);
+            _container.Measure(new Size(double.PositiveInfinity, OverlayHeightDip));
+            _renderedWidthDip = Math.Ceiling(_container.DesiredSize.Width);
+            Width = _renderedWidthDip;
             if (Width <= availableWidth)
             {
                 ApplyExtendedStyles();
@@ -117,6 +125,7 @@ internal sealed class UsageOverlayWindow : Window
         }
 
         _layout = OverlayLayout.Hidden;
+        _renderedWidthDip = 0;
         Width = 0;
         ApplyExtendedStyles();
         return OverlayLayout.Hidden;
@@ -145,13 +154,30 @@ internal sealed class UsageOverlayWindow : Window
 
         UpdateLayout();
         var dpi = NativeMethods.GetDpiForWindow(codexWindowHandle);
-        var scale = dpi / 96d;
-        var width = Math.Max(1, (int)Math.Ceiling(Width * scale));
-        var height = Math.Max(1, (int)Math.Ceiling(Height * scale));
+        var placement = CalculatePlacement(rect, settings, _renderedWidthDip, dpi);
+        NativeMethods.SetWindowPos(
+            source.Handle,
+            0,
+            placement.X,
+            placement.Y,
+            placement.Width,
+            placement.Height,
+            NativeMethods.SwpNoActivate | NativeMethods.SwpShowWindow | NativeMethods.SwpNoOwnerZOrder);
+    }
+
+    internal static OverlayPlacement CalculatePlacement(
+        NativeMethods.Rect rect,
+        UserSettings settings,
+        double renderedWidthDip,
+        uint dpi)
+    {
+        var effectiveDpi = dpi == 0 ? 96u : dpi;
+        var scale = effectiveDpi / 96d;
+        var width = Math.Max(1, (int)Math.Ceiling(renderedWidthDip * scale));
+        var height = Math.Max(1, (int)Math.Ceiling(OverlayHeightDip * scale));
         var x = rect.Left + (rect.Width - width) / 2 + (int)Math.Round(settings.HorizontalOffset * scale);
         var y = rect.Top + (int)Math.Round(settings.VerticalOffset * scale);
-        NativeMethods.SetWindowPos(source.Handle, 0, x, y, width, height,
-            NativeMethods.SwpNoActivate | NativeMethods.SwpShowWindow | NativeMethods.SwpNoOwnerZOrder);
+        return new OverlayPlacement(x, y, width, height);
     }
 
     private void ApplyExtendedStyles()
