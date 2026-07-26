@@ -35,6 +35,9 @@ internal sealed record CommandLineOptions(CommandLineAction Action, int ExitCode
           usage-indicator disable-startup
           usage-indicator help
 
+        Keyboard shortcut:
+          Ctrl+Alt+U    Turn the indicator display on or off while running
+
         Running usage-indicator without arguments shows this help.
         """;
 

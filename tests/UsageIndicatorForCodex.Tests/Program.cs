@@ -517,6 +517,26 @@ static void CancelsAndReplacesRefreshRequests()
 
 static void ParsesApplicationCommandsStrictly()
 {
+    const string expectedUsage = """
+        Usage Indicator for Codex
+
+        Commands:
+          usage-indicator start
+          usage-indicator stop
+          usage-indicator status
+          usage-indicator version
+          usage-indicator check-update
+          usage-indicator update
+          usage-indicator enable-startup
+          usage-indicator disable-startup
+          usage-indicator help
+
+        Keyboard shortcut:
+          Ctrl+Alt+U    Turn the indicator display on or off while running
+
+        Running usage-indicator without arguments shows this help.
+        """;
+
     AssertEqual(CommandLineAction.Run, CommandLineOptions.Parse([]).Action);
     AssertEqual(CommandLineAction.Run, CommandLineOptions.Parse(["start"]).Action);
     AssertEqual(CommandLineAction.Run, CommandLineOptions.Parse(["--background"]).Action);
@@ -543,6 +563,7 @@ static void ParsesApplicationCommandsStrictly()
     AssertEqual(2, CommandLineOptions.Parse(["--unknown"]).ExitCode);
     AssertEqual(true, CommandLineOptions.Parse(["--unknown"]).Message.Contains(CommandLineOptions.Usage, StringComparison.Ordinal));
     AssertEqual(true, CommandLineOptions.Usage.Contains("usage-indicator update", StringComparison.Ordinal));
+    AssertEqual(expectedUsage, CommandLineOptions.Usage);
     AssertEqual(false, CommandLineOptions.Usage.Contains("UsageIndicatorForCodex.exe", StringComparison.Ordinal));
     AssertEqual(false, CommandLineOptions.Usage.Contains("Portable", StringComparison.Ordinal));
     AssertEqual(false, CommandLineOptions.Usage.Contains("--", StringComparison.Ordinal));
