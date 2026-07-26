@@ -234,7 +234,7 @@ static void UsesCanonicalAssemblyIdentities()
 
 static void UsesAuthoritativeProductVersion()
 {
-    AssertEqual("0.1.0", ProductInfo.Version);
+    AssertEqual("0.2.0", ProductInfo.Version);
     AssertEqual(
         ProductInfo.Version,
         typeof(UsageIndicatorForCodex.App).Assembly
@@ -571,26 +571,26 @@ static void ParsesApplicationCommandsStrictly()
 
 static void SelectsStableUpdatesAndExactAssets()
 {
-    var release = ReleaseUpdateService.ParseLatestStableRelease(CreateReleaseJson("0.2.0"));
-    AssertEqual(new Version(0, 2, 0), release.Version);
+    var release = ReleaseUpdateService.ParseLatestStableRelease(CreateReleaseJson("0.3.0"));
+    AssertEqual(new Version(0, 3, 0), release.Version);
     AssertEqual(
-        "UsageIndicatorForCodex-Setup-v0.2.0.exe",
+        "UsageIndicatorForCodex-Setup-v0.3.0.exe",
         ReleaseUpdateService.SelectExactAsset(
             release,
-            "UsageIndicatorForCodex-Setup-v0.2.0.exe").Name);
+            "UsageIndicatorForCodex-Setup-v0.3.0.exe").Name);
     AssertThrows<InvalidDataException>(() =>
         ReleaseUpdateService.SelectExactAsset(
             release,
-            "usageindicatorforcodex-setup-v0.2.0.exe"));
+            "usageindicatorforcodex-setup-v0.3.0.exe"));
 
-    var prerelease = CreateReleaseJson("0.2.0").Replace(
+    var prerelease = CreateReleaseJson("0.3.0").Replace(
         "\"prerelease\": false",
         "\"prerelease\": true",
         StringComparison.Ordinal);
     AssertThrows<InvalidDataException>(() =>
         ReleaseUpdateService.ParseLatestStableRelease(prerelease));
     AssertThrows<InvalidDataException>(() =>
-        ReleaseUpdateService.ParseLatestStableRelease(CreateReleaseJson("0.2.0-beta")));
+        ReleaseUpdateService.ParseLatestStableRelease(CreateReleaseJson("0.3.0-beta")));
 }
 
 static void ChecksForUpdatesWithoutDownloadingAssets()
@@ -600,7 +600,7 @@ static void ChecksForUpdatesWithoutDownloadingAssets()
         AssertEqual(
             "https://api.github.com/repos/example/project/releases/latest",
             request.RequestUri!.AbsoluteUri);
-        return JsonResponse(CreateReleaseJson("0.2.0"));
+        return JsonResponse(CreateReleaseJson("0.3.0"));
     });
     using var client = new HttpClient(handler);
     var result = new ReleaseUpdateService(
@@ -613,12 +613,12 @@ static void ChecksForUpdatesWithoutDownloadingAssets()
 
     AssertEqual(true, result.IsAvailable);
     AssertEqual(1, handler.Requests.Count);
-    AssertEqual("Update available: 0.2.0 (current 0.1.0).", result.Message);
+    AssertEqual("Update available: 0.3.0 (current 0.2.0).", result.Message);
 }
 
 static void DownloadsOnlyChecksumVerifiedInstallers()
 {
-    var installerName = "UsageIndicatorForCodex-Setup-v0.2.0.exe";
+    var installerName = "UsageIndicatorForCodex-Setup-v0.3.0.exe";
     var installerBytes = new byte[] { 1, 3, 3, 7 };
     var checksum = Convert.ToHexString(SHA256.HashData(installerBytes)).ToLowerInvariant();
     var handler = new RecordingHttpMessageHandler(request =>
@@ -626,7 +626,7 @@ static void DownloadsOnlyChecksumVerifiedInstallers()
         var uri = request.RequestUri!.AbsoluteUri;
         if (uri.EndsWith("/releases/latest", StringComparison.Ordinal))
         {
-            return JsonResponse(CreateReleaseJson("0.2.0"));
+            return JsonResponse(CreateReleaseJson("0.3.0"));
         }
 
         if (uri.EndsWith($"/{installerName}", StringComparison.Ordinal))
@@ -675,12 +675,12 @@ static void RejectsInvalidUpdatesAndRepositoryUrls()
     AssertThrows<InvalidDataException>(() =>
         ReleaseUpdateService.ParseChecksum(
             $"{new string('0', 64)}  Wrong.exe",
-            "UsageIndicatorForCodex-Setup-v0.2.0.exe"));
+            "UsageIndicatorForCodex-Setup-v0.3.0.exe"));
     AssertThrows<InvalidDataException>(() =>
         ReleaseUpdateService.ParseChecksum(
-            $"{new string('0', 64)}  UsageIndicatorForCodex-Setup-v0.2.0.exe\n"
+            $"{new string('0', 64)}  UsageIndicatorForCodex-Setup-v0.3.0.exe\n"
             + $"{new string('0', 64)}  extra.exe",
-            "UsageIndicatorForCodex-Setup-v0.2.0.exe"));
+            "UsageIndicatorForCodex-Setup-v0.3.0.exe"));
 }
 
 static void RejectsConcurrentUpdatesBeforeWork()

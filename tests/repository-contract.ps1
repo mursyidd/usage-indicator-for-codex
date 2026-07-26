@@ -94,8 +94,42 @@ if ($RequirePreservedLocalFiles -or $stagedSuperpowersDeletions.Count -gt 0) {
 
 . $metadataScript
 $metadata = Get-UsageIndicatorProductMetadata -RepositoryRoot $repositoryRoot
-if ($metadata.Version -cne '0.1.0') {
+if ($metadata.Version -cne '0.2.0') {
     throw "Unexpected product version: $($metadata.Version)"
+}
+
+$releaseNotesPath = Join-Path (
+    Join-Path $repositoryRoot '.github\release-notes') "$($metadata.Tag).md"
+if (-not (Test-Path -LiteralPath $releaseNotesPath -PathType Leaf)) {
+    throw "Canonical release notes file is missing: $releaseNotesPath"
+}
+$releaseNotes = Get-Content -LiteralPath $releaseNotesPath -Raw
+if ([string]::IsNullOrWhiteSpace($releaseNotes)) {
+    throw "Canonical release notes file is empty: $releaseNotesPath"
+}
+$expectedReleaseComparison =
+    'https://github.com/mursyidd/usage-indicator-for-codex/compare/v0.1.0...v0.2.0'
+$releaseComparisons = @(
+    [regex]::Matches(
+        $releaseNotes,
+        'https://github\.com/mursyidd/usage-indicator-for-codex/compare/v[^)\s]+') |
+        ForEach-Object Value
+)
+if ($releaseComparisons.Count -ne 1 -or
+    $releaseComparisons[0] -cne $expectedReleaseComparison) {
+    throw "Canonical release notes must contain exactly this comparison: $expectedReleaseComparison"
+}
+if ([regex]::IsMatch(
+    $releaseNotes,
+    '\bpatch\s+release\b',
+    [Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+    throw 'Canonical release notes must not describe v0.2.0 as a patch release.'
+}
+if ([regex]::IsMatch(
+    $releaseNotes,
+    '\breset[\s-]+time(?:stamp)?s?\b|\b(?:local[\s-]+)?time[\s-]*zone\b',
+    [Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+    throw 'Canonical v0.2.0 release notes must not list the already-tagged reset-time timezone correction.'
 }
 foreach ($portableProperty in @('PortableAssetName', 'PortableChecksumAssetName')) {
     if ($metadata.PSObject.Properties.Name -ccontains $portableProperty) {
@@ -619,11 +653,22 @@ foreach ($fragment in @(
     '$env:GITHUB_REF_NAME -cne $metadata.Tag',
     '${{ github.server_url }}/${{ github.repository }}',
     '.\tests\release-contract.ps1',
-    'gh release create $env:GITHUB_REF_NAME @assets --verify-tag'
+    '$notesPath = Join-Path $env:GITHUB_WORKSPACE ".github\release-notes\$($env:GITHUB_REF_NAME).md"',
+    'Test-Path -LiteralPath $notesPath -PathType Leaf',
+    '$notes = Get-Content -LiteralPath $notesPath -Raw',
+    '[string]::IsNullOrWhiteSpace($notes)',
+    'gh release create $env:GITHUB_REF_NAME @assets',
+    '--verify-tag',
+    '--fail-on-no-commits',
+    '--title "Usage Indicator for Codex $env:GITHUB_REF_NAME"',
+    '--notes-file $notesPath'
 )) {
     if ($releaseWorkflow.IndexOf($fragment, [StringComparison]::Ordinal) -lt 0) {
         throw "Release workflow is missing version/asset invariant: $fragment"
     }
+}
+if ($releaseWorkflow.IndexOf('--generate-notes', [StringComparison]::Ordinal) -ge 0) {
+    throw 'Release workflow must publish the canonical notes file instead of generating notes.'
 }
 
 $expectedInnoSetupVersion = '6.7.1'

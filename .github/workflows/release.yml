@@ -117,4 +117,16 @@ jobs:
           $assetDirectory = Join-Path $env:RUNNER_TEMP 'release-assets'
           .\tests\release-contract.ps1 -AssetDirectory $assetDirectory
           $assets = @(Get-ChildItem -LiteralPath $assetDirectory -File | Sort-Object Name | ForEach-Object FullName)
-          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --generate-notes
+          $notesPath = Join-Path $env:GITHUB_WORKSPACE ".github\release-notes\$($env:GITHUB_REF_NAME).md"
+          if (-not (Test-Path -LiteralPath $notesPath -PathType Leaf)) {
+            throw "Release notes file is missing for tag $env:GITHUB_REF_NAME`: $notesPath"
+          }
+          $notes = Get-Content -LiteralPath $notesPath -Raw
+          if ([string]::IsNullOrWhiteSpace($notes)) {
+            throw "Release notes file is empty for tag $env:GITHUB_REF_NAME`: $notesPath"
+          }
+          gh release create $env:GITHUB_REF_NAME @assets `
+            --verify-tag `
+            --fail-on-no-commits `
+            --title "Usage Indicator for Codex $env:GITHUB_REF_NAME" `
+            --notes-file $notesPath
