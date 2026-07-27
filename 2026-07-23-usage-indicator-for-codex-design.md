@@ -15,7 +15,9 @@ The only supported distribution is the per-user Inno Setup installer. It install
 the self-contained GUI under
 `%LOCALAPPDATA%\Programs\UsageIndicatorForCodex\app`, installs
 `usage-indicator.exe` under the sibling `bin` directory, and adds only that
-owned `bin` entry to the current user's `PATH`. The installed launcher provides
+owned `bin` entry to the current user's `PATH`. A standalone single-file
+`UsageIndicatorForCodex.UpdateHost.exe` is installed under sibling `updater`.
+The installed launcher provides
 the public `start`, `stop`, `status`, `version`, `check-update`, `update`,
 `enable-startup`, `disable-startup`, and `help` verbs. The GUI remains the
 managed command host and is not a public executable interface. The release
@@ -172,11 +174,23 @@ A crashed companion cannot restart itself. Task Scheduler owns the bounded resta
 Installed updates are explicit. `check-update` reads stable release metadata
 without locking or downloading. `update` acquires a distinct per-user mutex
 before network access, downloads the exact installer and checksum assets,
-verifies the filename-bound SHA-256 record, stops the GUI, and launches the
-installer interactively. The mutex is released after success, no update,
-failure, cancellation, or handoff; abandoned mutexes are recoverable. A
-concurrent update exits `1` with `An update is already in progress.` The updater
-never directly overwrites installed files.
+verifies the filename-bound SHA-256 record before graceful process stopping,
+and runs the verified installer through a cached standalone UpdateHost. The
+private bootstrap-v1 `/CLIUPDATE` mode replaces the installed host and GUI
+payload but never the running stable launcher, startup ownership, or PATH
+ownership. It fails closed for a missing/mismatched recorded install path,
+incomplete layout, unsupported bootstrap version, or silent first install.
+
+After installer exit `0` or `3010`, the host independently requires the target
+version from installer-owned registry state, the installed UpdateHost, and the
+GUI. It restarts only a previously running companion after exit `0`. Validated
+`3010` is propagated as restart-required without application restart or ordinary
+success. Post-installer failures report the log path. The mutex is held through
+validation and any restart, then released on every exit; abandoned mutexes are
+recoverable. A concurrent update exits `1` with
+`An update is already in progress.` Fresh installs and the one-time legacy
+transition remain interactive; later compatible updates are silent and still
+explicitly user-triggered.
 
 A major Codex title-bar redesign may require a companion update. Configurable alignment offsets provide a recovery path for minor layout changes.
 

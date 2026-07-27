@@ -1,8 +1,8 @@
 using System.Diagnostics;
 using System.IO;
-using System.Net.Http;
 using System.Windows;
 using UsageIndicatorForCodex.Services;
+using UsageIndicatorForCodex.Update;
 using UsageIndicatorForCodex.Views;
 
 namespace UsageIndicatorForCodex;
@@ -108,7 +108,10 @@ public partial class App : System.Windows.Application
 
         if (options.Action is CommandLineAction.CheckUpdate or CommandLineAction.Update)
         {
-            _ = CheckForUpdateAndShutdownAsync(options.Action == CommandLineAction.Update);
+            CommandLineOutput.Show(
+                "Update commands must be invoked through usage-indicator.exe.",
+                isError: true);
+            Shutdown(1);
             return;
         }
 
@@ -192,64 +195,6 @@ public partial class App : System.Windows.Application
         catch (Exception exception)
         {
             CommandLineOutput.Show($"Stop failed. {exception.Message}", isError: true);
-            Shutdown(1);
-        }
-    }
-
-    private async Task CheckForUpdateAndShutdownAsync(bool prepareUpdate)
-    {
-        try
-        {
-            var repositoryUrl = ProductInfo.RepositoryUrl;
-            if (string.IsNullOrWhiteSpace(repositoryUrl))
-            {
-                throw new InvalidOperationException(
-                    "This build does not contain an explicitly configured GitHub repository URL.");
-            }
-
-            using var httpClient = new HttpClient
-            {
-                Timeout = TimeSpan.FromSeconds(30)
-            };
-            var updateService = new ReleaseUpdateService(
-                httpClient,
-                repositoryUrl,
-                ProductInfo.Version);
-            if (!prepareUpdate)
-            {
-                var check = await updateService.CheckAsync(CancellationToken.None);
-                CommandLineOutput.Show(check.Message, isError: false);
-                Shutdown(0);
-                return;
-            }
-
-            var updateRoot = Path.Combine(
-                Path.GetTempPath(),
-                "UsageIndicatorForCodex",
-                "updates");
-            var result = await UpdateCommandRunner.ExecuteAsync(
-                UpdateMutexService.CreateForCurrentUser,
-                cancellationToken => updateService.PrepareUpdateAsync(
-                    updateRoot,
-                    cancellationToken),
-                StopRunningInstanceAsync,
-                installerPath =>
-                {
-                    _ = Process.Start(new ProcessStartInfo
-                    {
-                        FileName = installerPath,
-                        UseShellExecute = true
-                    }) ?? throw new InvalidOperationException(
-                        "The installer process could not be started.");
-                },
-                ProductInfo.Version,
-                CancellationToken.None);
-            CommandLineOutput.Show(result.Message, result.IsError);
-            Shutdown(result.ExitCode);
-        }
-        catch (Exception exception)
-        {
-            CommandLineOutput.Show($"Update failed. {exception.Message}", isError: true);
             Shutdown(1);
         }
     }

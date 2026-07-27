@@ -330,6 +330,11 @@ $publicContractDocuments = [ordered]@{
         'exits `2`',
         'startup: unrecognized',
         'An update is already in progress.',
+        'UsageIndicatorForCodex.UpdateHost.exe',
+        'update-logs',
+        'exit `3010`',
+        'silent first-install',
+        'legacy installation receives one interactive transitional upgrade',
         '`usage-indicator` is not recognized',
         'Usage unavailable does not mean 0% remaining.',
         'Get-TimeZone',
@@ -350,7 +355,10 @@ $publicContractDocuments = [ordered]@{
         'Arm64',
         'UsageIndicatorForCodex-Setup-v<version>.exe',
         'UsageIndicatorForCodex-Setup-v<version>.exe.sha256',
-        'exactly two public assets'
+        'exactly two public assets',
+        'bootstrap-v1',
+        'single-file UpdateHost',
+        'exit `3010`'
     )
     'CONTRIBUTING.md' = @(
         'UsageIndicatorForCodex.Gui.exe --background',
@@ -362,7 +370,10 @@ $publicContractDocuments = [ordered]@{
         'Arm64',
         'Get-UsageIndicatorProductMetadata',
         '$installerPath = Join-Path $release $metadata.InstallerAssetName',
-        '-InstallerPath $installerPath'
+        '-InstallerPath $installerPath',
+        'publish-update-host.ps1',
+        'update-host-integration.ps1',
+        'Validated `3010`'
     )
     '2026-07-23-usage-indicator-for-codex-design.md' = @(
         'Distribution and Command Architecture',
@@ -370,6 +381,9 @@ $publicContractDocuments = [ordered]@{
         'internal upgrade compatibility',
         'Ownership collisions exit `2`',
         'An update is already in progress.',
+        'bootstrap-v1',
+        'Validated',
+        'one-time legacy',
         'LICENSE.txt',
         'Arm64'
     )
@@ -599,6 +613,43 @@ foreach ($forbiddenReleaseFragment in @(
         throw "Release asset script still requires a portable artifact: $forbiddenReleaseFragment"
     }
 }
+
+foreach ($staleUpdateClaim in @(
+    'launches the installer interactively',
+    'starts the installer interactively',
+    'Updates must remain explicit and interactive',
+    'The updater does not replace installed files itself, invoke silent installation'
+)) {
+    foreach ($documentPath in @(
+        'README.md',
+        'SECURITY.md',
+        'CONTRIBUTING.md',
+        '2026-07-23-usage-indicator-for-codex-design.md'
+    )) {
+        $document = Get-Content -LiteralPath (Join-Path $repositoryRoot $documentPath) -Raw
+        if ($document.IndexOf($staleUpdateClaim, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            throw "$documentPath contains stale update behavior: $staleUpdateClaim"
+        }
+    }
+}
+$publishUpdateHostScript = Get-Content -LiteralPath (
+    Join-Path $repositoryRoot 'scripts\publish-update-host.ps1') -Raw
+foreach ($requiredHostPublishFragment in @(
+    'UsageIndicatorForCodex.UpdateHost.csproj',
+    '--runtime', 'win-x64',
+    '--self-contained', 'true',
+    '-p:PublishSingleFile=true',
+    '-p:PublishTrimmed=false',
+    'UsageIndicatorForCodex.UpdateHost.exe',
+    'VersionInfo.ProductVersion',
+    'unexpectedRuntimeFiles'
+)) {
+    if ($publishUpdateHostScript.IndexOf(
+        $requiredHostPublishFragment,
+        [StringComparison]::Ordinal) -lt 0) {
+        throw "UpdateHost publish script is missing standalone-host behavior: $requiredHostPublishFragment"
+    }
+}
 $launcherBuildScript = Get-Content -LiteralPath (
     Join-Path $repositoryRoot 'scripts\build-launcher.ps1') -Raw
 foreach ($forbiddenLauncherBuildFragment in @(
@@ -613,7 +664,11 @@ foreach ($forbiddenLauncherBuildFragment in @(
 }
 foreach ($requiredLauncherBuildFragment in @(
     "'usage-indicator.exe'",
-    'Launcher output filename must be usage-indicator.exe'
+    'Launcher output filename must be usage-indicator.exe',
+    "'version.def'",
+    "'ole32.def'",
+    '$IntegrationTestBuild',
+    '/DUSAGE_INDICATOR_E2E_TEST'
 )) {
     if ($launcherBuildScript.IndexOf($requiredLauncherBuildFragment, [StringComparison]::Ordinal) -lt 0) {
         throw "Installed launcher build is missing required behavior: $requiredLauncherBuildFragment"
@@ -631,7 +686,20 @@ foreach ($forbiddenLauncherSourceFragment in @(
     }
 }
 foreach ($requiredLauncherSourceFragment in @(
-    '..\\app\\UsageIndicatorForCodex.Gui.exe',
+    'app\\UsageIndicatorForCodex.Gui.exe',
+    'updater\\UsageIndicatorForCodex.UpdateHost.exe',
+    'UsageIndicatorForCodex.UpdateHost.',
+    'update-host',
+    '--command',
+    '--install-root',
+    '--bootstrap-version',
+    'SHGetKnownFolderPath',
+    'GetFileVersionInfoW',
+    'CopyFileW',
+    'GetCurrentProcessId',
+    '#ifdef USAGE_INDICATOR_E2E_TEST',
+    'USAGE_INDICATOR_E2E_LOCAL_APP_DATA',
+    'GetEnvironmentVariableW',
     'DefaultArgument[] = L"help"',
     'AsyncArgument[] = L"start"'
 )) {
@@ -697,13 +765,31 @@ foreach ($workflowEntry in $workflowContracts.GetEnumerator()) {
     }
 
     foreach ($requiredLauncherContractFragment in @(
+        '- name: Publish standalone launcher probe',
         '- name: Validate installed launcher contract',
         '.\tests\installed-launcher-contract.ps1',
         '-InstalledLauncher (Join-Path $env:RUNNER_TEMP ''usage-indicator.exe'')',
-        '-LauncherProbe .\tests\UsageIndicatorForCodex.LauncherProbe\bin\Release\net8.0\UsageIndicatorForCodex.LauncherProbe.exe'
+        '-LauncherProbe (Join-Path $env:RUNNER_TEMP ''launcher-probe\UsageIndicatorForCodex.LauncherProbe.exe'')'
     )) {
         if ($workflowEntry.Value.IndexOf($requiredLauncherContractFragment, [StringComparison]::Ordinal) -lt 0) {
             throw "$($workflowEntry.Key) is missing installed launcher contract coverage: $requiredLauncherContractFragment"
+        }
+    }
+
+    foreach ($requiredUpdateHostFragment in @(
+        '- name: Publish standalone update host',
+        '.\scripts\publish-update-host.ps1',
+        '-OutputDirectory (Join-Path $env:RUNNER_TEMP ''update-host'')',
+        '-UpdateHostPath (Join-Path $env:RUNNER_TEMP ''update-host\UsageIndicatorForCodex.UpdateHost.exe'')',
+        '.\tests\update-host-integration.ps1',
+        '.\tests\silent-upgrade-acceptance.ps1',
+        '-PublishDirectory (Join-Path $env:RUNNER_TEMP ''publish'')',
+        '-InstalledLauncher (Join-Path $env:RUNNER_TEMP ''usage-indicator.exe'')'
+    )) {
+        if ($workflowEntry.Value.IndexOf(
+            $requiredUpdateHostFragment,
+            [StringComparison]::Ordinal) -lt 0) {
+            throw "$($workflowEntry.Key) is missing standalone UpdateHost packaging: $requiredUpdateHostFragment"
         }
     }
 

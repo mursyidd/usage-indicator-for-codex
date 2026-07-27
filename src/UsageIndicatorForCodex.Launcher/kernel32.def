@@ -1,6 +1,9 @@
 LIBRARY KERNEL32.DLL
 EXPORTS
     CloseHandle
+    CompareStringOrdinal
+    CopyFileW
+    CreateDirectoryW
     CreateFileW
     CreateProcessW
     DuplicateHandle
@@ -9,7 +12,10 @@ EXPORTS
     GetConsoleProcessList
     GetConsoleWindow
     GetCurrentProcess
+    GetCurrentProcessId
     GetExitCodeProcess
+    GetEnvironmentVariableW
+    GetLastError
     GetModuleFileNameW
     GetProcessHeap
     GetStdHandle

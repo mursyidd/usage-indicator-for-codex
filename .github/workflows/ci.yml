@@ -59,12 +59,30 @@ jobs:
           .\scripts\build-launcher.ps1 `
             -OutputPath (Join-Path $env:RUNNER_TEMP 'usage-indicator.exe')
 
+      - name: Publish standalone launcher probe
+        shell: pwsh
+        run: |
+          dotnet publish .\tests\UsageIndicatorForCodex.LauncherProbe\UsageIndicatorForCodex.LauncherProbe.csproj `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained true `
+            --no-restore `
+            --output (Join-Path $env:RUNNER_TEMP 'launcher-probe')
+
       - name: Validate installed launcher contract
         shell: pwsh
         run: |
           .\tests\installed-launcher-contract.ps1 `
             -InstalledLauncher (Join-Path $env:RUNNER_TEMP 'usage-indicator.exe') `
-            -LauncherProbe .\tests\UsageIndicatorForCodex.LauncherProbe\bin\Release\net8.0\UsageIndicatorForCodex.LauncherProbe.exe
+            -LauncherProbe (Join-Path $env:RUNNER_TEMP 'launcher-probe\UsageIndicatorForCodex.LauncherProbe.exe')
+
+      - name: Publish standalone update host
+        shell: pwsh
+        run: |
+          .\scripts\publish-update-host.ps1 `
+            -OutputDirectory (Join-Path $env:RUNNER_TEMP 'update-host') `
+            -RepositoryUrl $env:REPOSITORY_URL `
+            -NoRestore
 
       - name: Install Inno Setup
         run: choco install innosetup --version=6.7.1 --yes --no-progress
@@ -87,10 +105,20 @@ jobs:
           $installer = .\scripts\build-installer.ps1 `
             -PublishDirectory (Join-Path $env:RUNNER_TEMP 'publish') `
             -InstalledLauncher (Join-Path $env:RUNNER_TEMP 'usage-indicator.exe') `
+            -UpdateHostPath (Join-Path $env:RUNNER_TEMP 'update-host\UsageIndicatorForCodex.UpdateHost.exe') `
             -OutputDirectory $assetDirectory `
             -RepositoryUrl $env:REPOSITORY_URL `
             -IsccPath $env:INNO_SETUP_COMPILER
           .\tests\installer-contract.ps1 -InstallerPath $installer.FullName
+          .\tests\update-host-integration.ps1 `
+            -UpdateHostPath (Join-Path $env:RUNNER_TEMP 'update-host\UsageIndicatorForCodex.UpdateHost.exe') `
+            -InstallerPath $installer.FullName
+          .\tests\silent-upgrade-acceptance.ps1 `
+            -UpdateHostPath (Join-Path $env:RUNNER_TEMP 'update-host\UsageIndicatorForCodex.UpdateHost.exe') `
+            -PublishDirectory (Join-Path $env:RUNNER_TEMP 'publish') `
+            -InstalledLauncher (Join-Path $env:RUNNER_TEMP 'usage-indicator.exe') `
+            -RepositoryUrl $env:REPOSITORY_URL `
+            -IsccPath $env:INNO_SETUP_COMPILER
 
       - name: Generate checksums and validate exact release assets
         shell: pwsh

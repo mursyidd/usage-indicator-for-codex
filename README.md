@@ -126,8 +126,10 @@ For [`usage-indicator` is not recognized](#usage-indicator-is-not-recognized),
 │   ├── UsageIndicatorForCodex.Gui.exe
 │   ├── LICENSE.txt
 │   └── self-contained runtime files
-└── bin\
-    └── usage-indicator.exe
+├── bin\
+│   └── usage-indicator.exe
+└── updater\
+    └── UsageIndicatorForCodex.UpdateHost.exe
 ```
 
 Only `bin` is added to the current user's `PATH`. The installer records
@@ -136,7 +138,9 @@ entry that existed before installation.
 
 `UsageIndicatorForCodex.Gui.exe` is the internal WPF implementation and command
 host, not a public command. Use `usage-indicator` instead of invoking it
-directly.
+directly. The native launcher is the stable bootstrap. The standalone update
+host is copied to a versioned LocalAppData cache before update work, so the
+installer can replace the installed host and GUI payload safely.
 
 ## Commands
 
@@ -149,7 +153,7 @@ usage-indicator stop              Stop the canonical running instance
 usage-indicator status            Inspect running, indicator, and startup state
 usage-indicator version           Print the product version
 usage-indicator check-update      Report whether a stable update is available
-usage-indicator update            Verify and launch a newer installer
+usage-indicator update            Verify, install, and validate a stable update
 usage-indicator enable-startup    Register or update current-user startup
 usage-indicator disable-startup   Remove positively recognized owned tasks
 usage-indicator help              Show command help
@@ -177,6 +181,8 @@ startup: enabled|disabled|unrecognized
 - Invalid, duplicate, combined, or incorrectly cased command syntax exits `2`
   and does not start the companion.
 - A concurrent `usage-indicator update` exits `1`.
+- A validated installer restart requirement exits `3010`; the companion is not
+  restarted until Windows has restarted.
 
 An unrecognized startup state is an ownership warning, not an inspection
 failure. The application refuses to mutate the foreign task.
@@ -231,17 +237,38 @@ reports availability without downloading or installing anything.
 
 `usage-indicator update` is explicit:
 
-1. Query the latest stable release.
-2. Select the exact versioned installer and checksum assets.
-3. Download both to a version-specific temporary directory.
-4. Require the checksum record to name that installer and verify SHA-256.
-5. Stop the running companion.
-6. Launch the installer visibly and interactively.
+1. The stable native launcher copies the installed standalone UpdateHost to
+   `%LOCALAPPDATA%\UsageIndicatorForCodex\update-host\v<version>` and waits for
+   that cached process in the original shell.
+2. The host acquires the per-user update mutex, queries the latest stable
+   release, and selects the exact versioned installer and checksum assets.
+3. It downloads both, requires the checksum record to name that installer, and
+   verifies SHA-256 before inspecting or stopping the companion.
+4. It records whether the companion is running and stops it gracefully through
+   the existing single-instance command channel.
+5. It runs the verified installer silently in private `/CLIUPDATE` mode, waits
+   for completion, then independently requires the target version from
+   installer-owned registry state, the installed UpdateHost, and the GUI.
+6. On installer exit `0`, it restarts only a companion that was previously
+   running. On validated exit `3010`, it returns `3010`, reports that Windows
+   must restart, and does not restart the companion or print ordinary success.
 
-The updater never copies over installed application files, supplies silent
-installer flags, or runs from a timer, service, or automatic background path.
-Development builds without an explicitly configured GitHub repository URL fail
-closed.
+Each phase is printed in the invoking PowerShell or `cmd.exe` session. A
+post-installer failure reports the installer log under
+`%LOCALAPPDATA%\UsageIndicatorForCodex\update-logs`. UpdateHost cache copies are
+process-specific, so concurrent launcher invocations cannot overwrite a running
+host.
+
+Private `/CLIUPDATE` is not a silent first-install mechanism. It requires an
+existing complete bootstrap-v1 installation, matching installer-owned install
+path and bootstrap state, and it never replaces the running stable launcher or
+changes startup/PATH ownership. A fresh installation remains interactive. A
+legacy installation receives one interactive transitional upgrade that installs
+bootstrap v1; later compatible updates can be silent.
+
+Updates never run from a timer, service, scheduled task, or automatic background
+path, and production code never force-terminates the companion. Development
+builds without an explicitly configured GitHub repository URL fail closed.
 
 A distinct per-user update mutex is acquired before release metadata is
 requested and held through installer launch. A concurrent update exits `1` and
@@ -251,8 +278,9 @@ prints:
 An update is already in progress.
 ```
 
-The mutex is released after success, no update, failure, cancellation, or
-installer handoff. Abandoned mutexes are recovered safely.
+The mutex is held through installation, validation, and any conditional restart,
+then released after success, no update, failure, cancellation, or a validated
+restart requirement. Abandoned mutexes are recovered safely.
 `usage-indicator check-update` does not acquire this mutex.
 
 ## Codex CLI configuration
@@ -452,7 +480,8 @@ Failures can mean GitHub is unavailable, the embedded repository URL is missing
 or invalid, release metadata is malformed, exact installer or checksum assets
 are missing, the checksum record names a different installer, SHA-256
 verification fails, another update is already running, or the installer cannot
-be launched.
+be launched, the private installer guard rejects the existing layout, installed
+version validation fails, or a previously running companion cannot restart.
 
 When another update holds the lock, the exact message is:
 
@@ -461,6 +490,10 @@ An update is already in progress.
 ```
 
 Do not replace installed files manually.
+
+Post-installer failures print the exact installer log path. Exit `3010` means
+the target version was installed and validated, but Windows must restart before
+the companion can be started again.
 
 ### Bug-report diagnostic information
 

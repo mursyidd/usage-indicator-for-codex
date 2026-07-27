@@ -61,14 +61,29 @@ Update checks use an explicitly configured GitHub repository URL compiled into
 release builds. The owner is derived from build configuration or repository
 metadata and is never guessed.
 
-`check-update` retrieves stable release metadata only. `update` requires exact
-versioned installer and checksum asset names, binds the checksum record to the
-installer filename, verifies SHA-256, stops the running application, and starts
-the installer interactively. The updater does not replace installed files
-itself, invoke silent installation, or run automatically in the background. A
-distinct per-user mutex is acquired before update network access and held
-through installer launch. Concurrent update commands are rejected with
-`An update is already in progress.`; `check-update` is not locked.
+`check-update` retrieves stable release metadata only. For `update`, the stable
+native launcher executes a version-matched, process-specific cached copy of the
+standalone UpdateHost outside the installation directory. The host requires
+exact versioned installer and checksum asset names, binds the checksum record to
+the installer filename, and verifies SHA-256 before graceful process stopping.
+It then runs the verified installer in guarded private `/CLIUPDATE` mode and
+independently validates installer-owned version state plus the installed host
+and GUI versions before reporting success.
+
+Private `/CLIUPDATE` requires an existing complete bootstrap-v1 installation,
+an exact protocol version, and a recorded absolute install path matching the
+resolved installer path. It skips stable-launcher replacement, startup choices,
+PATH ownership mutation, and post-install launch. Silent first installation and
+unsupported bootstrap versions fail closed. Fresh installs and the one-time
+legacy transition remain interactive. Compatible updates never force-terminate
+the application, never use `/DIR`, and never request automatic installer
+restart.
+
+A distinct per-user mutex is acquired before update network access and held
+through validation and any conditional restart. Concurrent update commands are
+rejected with `An update is already in progress.`; `check-update` is not locked.
+Validated installer exit `3010` is propagated without restarting the companion.
+Post-installer failures include the installer log path.
 
 Task Scheduler ownership is positive, not name-only. The canonical
 `UsageIndicatorForCodex` task is recognized only when it runs either the exact
@@ -98,9 +113,11 @@ The exact version comes from canonical repository product metadata, must match
 the release tag, and the release still contains exactly two public assets.
 
 The installer displays the repository `LICENSE` and installs its byte-identical
-copy as `app\LICENSE.txt`. CI rebuilds the self-contained application and
-installed launcher, validates installer invariants, asset names, license
-content, and the checksum, then uploads exactly those two assets.
+copy as `app\LICENSE.txt`. CI rebuilds the self-contained application,
+single-file UpdateHost, and installed launcher, validates installer invariants,
+asset names, license content, and the checksum, then uploads exactly those two
+public assets. UpdateHost is packaged inside the installer, never as a third
+release asset.
 
 Public builds are unsigned and do not provide an Authenticode publisher
 identity. Windows may show SmartScreen or unknown-publisher warnings. Obtain

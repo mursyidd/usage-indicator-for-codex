@@ -11,22 +11,34 @@ $scriptPath = Join-Path $repositoryRoot 'installer\UsageIndicatorForCodex.iss'
 $script = Get-Content -LiteralPath $scriptPath -Raw
 
 $requiredFragments = @(
-    'DefaultDirName={localappdata}\Programs\UsageIndicatorForCodex',
+    'DefaultDirName={code:GetDefaultDirName}',
+    'ExpandConstant(''{localappdata}\Programs\UsageIndicatorForCodex'')',
     'PrivilegesRequired=lowest',
     'ArchitecturesAllowed=x64compatible',
     'MinVersion=10.0.22000',
     '#ifndef RepositoryLicensePath',
     '#error RepositoryLicensePath must be defined.',
+    '#ifndef UpdateHostPath',
+    '#error UpdateHostPath must be defined.',
     'LicenseFile={#RepositoryLicensePath}',
+    '#ifndef InstallerAppId',
+    'AppId={#InstallerAppId}',
     'OutputBaseFilename={#InstallerBaseName}',
     'VersionInfoVersion={#ProductVersion}.0',
     'Source: "{#PublishDirectory}\*"; DestDir: "{app}\app"; Excludes: "UsageIndicatorForCodex.exe,LICENSE.txt"',
     'Source: "{#RepositoryLicensePath}"; DestDir: "{app}\app"; DestName: "LICENSE.txt"',
     'Source: "{#InstalledLauncher}"; DestDir: "{app}\bin"; DestName: "usage-indicator.exe"',
+    'Source: "{#UpdateHostPath}"; DestDir: "{app}\updater"; DestName: "UsageIndicatorForCodex.UpdateHost.exe"',
+    'Check: ShouldInstallLauncher',
     'ChangesEnvironment=yes',
     'CloseApplications=yes',
     'RestartApplications=no',
-    'InstallerStateKey = ''Software\UsageIndicatorForCodex\Installer'';',
+    '#define InstallerStateSubKey "Software\UsageIndicatorForCodex\Installer"',
+    'InstallerStateKey = ''{#InstallerStateSubKey}'';',
+    'BootstrapVersionValue = ''BootstrapVersion'';',
+    'InstallPathValue = ''InstallPath'';',
+    'InstalledVersionValue = ''InstalledVersion'';',
+    'SupportedBootstrapVersion = 1;',
     'PathOwnershipValue = ''PathEntryOwned'';',
     'RegWriteExpandStringValue(HKCU, EnvironmentKey, ''Path'', PathValue)',
     'RegWriteDWordValue(HKCU, InstallerStateKey, PathOwnershipValue, 1)',
@@ -34,8 +46,22 @@ $requiredFragments = @(
     'if (not Removed) and',
     'RegDeleteValue(HKCU, InstallerStateKey, PathOwnershipValue)',
     'if CurStep = ssPostInstall then',
+    'WriteInstalledState;',
+    'if not CliUpdateMode then',
     'if CurUninstallStep = usUninstall then',
     'Flags: nowait postinstall skipifsilent',
+    'Check: ShouldRunPostInstall',
+    'function IsCliUpdateCommandLine: Boolean;',
+    'function ValidateCliUpdateInstallation: Boolean;',
+    'if CliUpdateMode and (not WizardSilent) then',
+    'The private /CLIUPDATE mode requires silent installer execution.',
+    'ExpandConstant(''{param:BOOTSTRAPVERSION|}'')',
+    'The private /CLIUPDATE mode requires an existing bootstrap-v1 installation.',
+    'Silent installation is supported only for a validated private /CLIUPDATE.',
+    'function ShouldInstallLauncher: Boolean;',
+    'function ShouldRunPostInstall: Boolean;',
+    'function ShouldCreateShortcuts: Boolean;',
+    'Check: ShouldCreateShortcuts',
     'StartupPage := CreateCustomPage(',
     'wpSelectTasks,',
     'StartupCheckBox.Caption := ''Start with Windows'';',
@@ -63,6 +89,12 @@ $requiredFragments = @(
     'if StartupCollisionDetected then',
     'ApplyStartupPreference',
     'RunStartupCleanupForUninstall',
+    'RemoveInstallerState',
+    'RegDeleteValue(HKCU, InstallerStateKey, BootstrapVersionValue)',
+    'RegDeleteValue(HKCU, InstallerStateKey, InstallPathValue)',
+    'RegDeleteValue(HKCU, InstallerStateKey, InstalledVersionValue)',
+    'RegDeleteValue(HKCU, InstallerStateKey, PathOwnershipValue)',
+    'RegDeleteKeyIfEmpty(HKCU, InstallerStateKey)',
     'LogStartupCommandOutput(''Startup cleanup'', Output)',
     'else if ResultCode = 2 then',
     'Foreign same-name startup tasks were preserved for manual inspection.',
@@ -84,10 +116,54 @@ foreach ($prohibitedFragment in @(
     '/VERYSILENT',
     'uninsdeletevalue',
     'Root: HKLM',
-    'DestDir: "{app}\bin"; DestName: "UsageIndicatorForCodex.Gui.exe"'
+    'DestDir: "{app}\bin"; DestName: "UsageIndicatorForCodex.Gui.exe"',
+    'CliUpdateMode := WizardSilent'
 )) {
     if ($script.IndexOf($prohibitedFragment, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
         throw "Installer contains prohibited behavior: $prohibitedFragment"
+    }
+}
+
+$uninstallCleanupMatch = [regex]::Match(
+    $script,
+    '(?s)procedure RemoveInstallerState;.*?begin(?<body>.*?)end;')
+if (-not $uninstallCleanupMatch.Success) {
+    throw 'Installer does not define bounded installer-state cleanup.'
+}
+$uninstallCleanupBody = $uninstallCleanupMatch.Groups['body'].Value
+foreach ($stateValue in @(
+    'BootstrapVersionValue',
+    'InstallPathValue',
+    'InstalledVersionValue',
+    'PathOwnershipValue'
+)) {
+    if ($uninstallCleanupBody.IndexOf(
+        "RegDeleteValue(HKCU, InstallerStateKey, $stateValue)",
+        [StringComparison]::Ordinal) -lt 0) {
+        throw "Uninstall cleanup does not delete $stateValue."
+    }
+}
+if ($uninstallCleanupBody.IndexOf(
+    'RegDeleteKeyIfEmpty(HKCU, InstallerStateKey)',
+    [StringComparison]::Ordinal) -lt 0) {
+    throw 'Uninstall cleanup does not delete the empty installer key.'
+}
+
+$buildInstallerScript = Get-Content -LiteralPath (
+    Join-Path $repositoryRoot 'scripts\build-installer.ps1') -Raw
+foreach ($fragment in @(
+    '[Parameter(Mandatory)][string]$UpdateHostPath',
+    'UsageIndicatorForCodex.UpdateHost.exe',
+    'VersionInfo.ProductVersion',
+    '/DUpdateHostPath=',
+    '$IntegrationTestInstallerStateSubKey',
+    '$IntegrationTestAppId',
+    'Software\UsageIndicatorForCodex\IntegrationTests\',
+    '/DInstallerStateSubKey=',
+    '/DInstallerAppId='
+)) {
+    if ($buildInstallerScript.IndexOf($fragment, [StringComparison]::Ordinal) -lt 0) {
+        throw "Installer build contract fragment is missing: $fragment"
     }
 }
 
@@ -280,4 +356,4 @@ if (-not [string]::IsNullOrWhiteSpace($InstallerPath)) {
     }
 }
 
-Write-Output 'PASS per-user installer layout, interactive behavior, and PATH ownership contract'
+Write-Output 'PASS per-user installer layout, guarded CLI update, transition, and ownership contract'

@@ -1,11 +1,10 @@
-using System.IO;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace UsageIndicatorForCodex.Services;
+namespace UsageIndicatorForCodex.Update;
 
 internal sealed record ReleaseAsset(string Name, Uri DownloadUri);
 
@@ -24,14 +23,30 @@ internal sealed record UpdateCheckResult(
         : $"Up to date: {CurrentVersion.ToString(3)}.";
 }
 
-internal sealed class ReleaseUpdateService
+internal sealed record PreparedUpdate(
+    Version TargetVersion,
+    string InstallerPath,
+    string WorkingDirectory);
+
+internal interface IReleaseUpdateClient
 {
-    private const string InstallerPrefix = "UsageIndicatorForCodex-Setup-v";
+    Task<UpdateCheckResult> CheckAsync(CancellationToken cancellationToken);
+
+    Task<PreparedUpdate> PrepareAsync(
+        StableRelease release,
+        string destinationRoot,
+        Action verificationStarted,
+        CancellationToken cancellationToken);
+}
+
+internal sealed class ReleaseUpdateClient : IReleaseUpdateClient
+{
     private readonly HttpClient _httpClient;
     private readonly Uri _latestReleaseUri;
     private readonly Version _currentVersion;
+    private readonly bool _allowLoopbackHttp;
 
-    internal ReleaseUpdateService(
+    internal ReleaseUpdateClient(
         HttpClient httpClient,
         string repositoryUrl,
         string currentVersion)
@@ -39,42 +54,73 @@ internal sealed class ReleaseUpdateService
         ArgumentNullException.ThrowIfNull(httpClient);
         _httpClient = httpClient;
         _latestReleaseUri = CreateLatestReleaseApiUri(repositoryUrl);
-        _currentVersion = ParseStableVersion(currentVersion, "current product version");
+        _allowLoopbackHttp = false;
+        _currentVersion = InitializeCurrentVersion(currentVersion);
+    }
+
+    internal ReleaseUpdateClient(
+        HttpClient httpClient,
+        Uri latestReleaseUri,
+        string currentVersion,
+        bool allowLoopbackHttp)
+    {
+        ArgumentNullException.ThrowIfNull(httpClient);
+        ArgumentNullException.ThrowIfNull(latestReleaseUri);
+        if (!allowLoopbackHttp
+            || !latestReleaseUri.IsAbsoluteUri
+            || latestReleaseUri.Scheme != Uri.UriSchemeHttp
+            || !latestReleaseUri.IsLoopback
+            || !string.IsNullOrEmpty(latestReleaseUri.Fragment))
+        {
+            throw new InvalidOperationException(
+                "The integration release endpoint must be an absolute loopback HTTP URI.");
+        }
+
+        _httpClient = httpClient;
+        _latestReleaseUri = latestReleaseUri;
+        _allowLoopbackHttp = true;
+        _currentVersion = InitializeCurrentVersion(currentVersion);
+    }
+
+    private Version InitializeCurrentVersion(string currentVersion)
+    {
+        var version = ParseStableVersion(currentVersion, "current product version");
         if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
         {
             _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
-                $"usage-indicator-for-codex/{_currentVersion.ToString(3)}");
+                $"usage-indicator-for-codex/{version.ToString(3)}");
         }
+
+        return version;
     }
 
-    internal async Task<UpdateCheckResult> CheckAsync(CancellationToken cancellationToken)
+    public async Task<UpdateCheckResult> CheckAsync(CancellationToken cancellationToken)
     {
         using var response = await _httpClient.GetAsync(_latestReleaseUri, cancellationToken);
         response.EnsureSuccessStatusCode();
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        var release = ParseLatestStableRelease(json);
+        var release = ParseLatestStableRelease(json, _allowLoopbackHttp);
         return new UpdateCheckResult(
             _currentVersion,
             release,
             release.Version > _currentVersion);
     }
 
-    internal async Task<string?> PrepareUpdateAsync(
+    public async Task<PreparedUpdate> PrepareAsync(
+        StableRelease release,
         string destinationRoot,
+        Action verificationStarted,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(release);
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationRoot);
-        var check = await CheckAsync(cancellationToken);
-        if (!check.IsAvailable)
-        {
-            return null;
-        }
+        ArgumentNullException.ThrowIfNull(verificationStarted);
 
-        var version = check.LatestRelease.Version.ToString(3);
-        var installerName = $"{InstallerPrefix}{version}.exe";
+        var version = release.Version.ToString(3);
+        var installerName = $"{ProductConstants.InstallerPrefix}{version}.exe";
         var checksumName = $"{installerName}.sha256";
-        var installerAsset = SelectExactAsset(check.LatestRelease, installerName);
-        var checksumAsset = SelectExactAsset(check.LatestRelease, checksumName);
+        var installerAsset = SelectExactAsset(release, installerName);
+        var checksumAsset = SelectExactAsset(release, checksumName);
 
         var installerBytes = await _httpClient.GetByteArrayAsync(
             installerAsset.DownloadUri,
@@ -82,6 +128,8 @@ internal sealed class ReleaseUpdateService
         var checksumBytes = await _httpClient.GetByteArrayAsync(
             checksumAsset.DownloadUri,
             cancellationToken);
+
+        verificationStarted();
         var expectedHash = ParseChecksum(
             Encoding.UTF8.GetString(checksumBytes),
             installerName);
@@ -102,7 +150,10 @@ internal sealed class ReleaseUpdateService
                 installerPath,
                 installerBytes,
                 cancellationToken);
-            return installerPath;
+            return new PreparedUpdate(
+                release.Version,
+                installerPath,
+                destinationDirectory);
         }
         catch
         {
@@ -145,7 +196,9 @@ internal sealed class ReleaseUpdateService
             $"https://api.github.com/repos/{Uri.EscapeDataString(segments[0])}/{Uri.EscapeDataString(repository)}/releases/latest");
     }
 
-    internal static StableRelease ParseLatestStableRelease(string json)
+    internal static StableRelease ParseLatestStableRelease(
+        string json,
+        bool allowLoopbackHttp = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(json);
         using var document = JsonDocument.Parse(json);
@@ -171,7 +224,10 @@ internal sealed class ReleaseUpdateService
                 ?? throw new InvalidDataException("A release asset name is missing.");
             var downloadUrl = assetElement.GetProperty("browser_download_url").GetString();
             if (!Uri.TryCreate(downloadUrl, UriKind.Absolute, out var downloadUri)
-                || downloadUri.Scheme != Uri.UriSchemeHttps)
+                || (downloadUri.Scheme != Uri.UriSchemeHttps
+                    && (!allowLoopbackHttp
+                        || downloadUri.Scheme != Uri.UriSchemeHttp
+                        || !downloadUri.IsLoopback)))
             {
                 throw new InvalidDataException($"Release asset URL is invalid: {name}");
             }
@@ -229,13 +285,13 @@ internal sealed class ReleaseUpdateService
             && CryptographicOperations.FixedTimeEquals(actualHash, expectedHash);
     }
 
-    private static Version ParseStableVersion(string value, string description)
+    internal static Version ParseStableVersion(string value, string description)
     {
         if (!Regex.IsMatch(
                 value,
                 "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
                 RegexOptions.CultureInvariant)
-            || !System.Version.TryParse(value, out var version))
+            || !Version.TryParse(value, out var version))
         {
             throw new InvalidDataException($"{description} is not a stable semantic version: {value}");
         }

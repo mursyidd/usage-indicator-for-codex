@@ -5,7 +5,9 @@ param(
 
     [string]$IntermediateDirectory,
 
-    [string]$ProductVersion
+    [string]$ProductVersion,
+
+    [switch]$IntegrationTestBuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -122,7 +124,9 @@ try {
     $objectPath = Join-Path $IntermediateDirectory 'launcher.obj'
     $kernelLibrary = Join-Path $IntermediateDirectory 'kernel32.lib'
     $shellLibrary = Join-Path $IntermediateDirectory 'shell32.lib'
+    $oleLibrary = Join-Path $IntermediateDirectory 'ole32.lib'
     $userLibrary = Join-Path $IntermediateDirectory 'user32.lib'
+    $versionLibrary = Join-Path $IntermediateDirectory 'version.lib'
     $resolvedOutputParent = Split-Path -Parent $OutputPath
     if ([string]::IsNullOrWhiteSpace($resolvedOutputParent)) {
         $resolvedOutputParent = (Get-Location).Path
@@ -151,10 +155,22 @@ try {
     Invoke-NativeBuildTool $libraryManager @(
         '/nologo',
         '/machine:x64',
+        "/def:$(Join-Path $sourceDirectory 'ole32.def')",
+        "/out:$oleLibrary"
+    )
+    Invoke-NativeBuildTool $libraryManager @(
+        '/nologo',
+        '/machine:x64',
         "/def:$(Join-Path $sourceDirectory 'user32.def')",
         "/out:$userLibrary"
     )
-    Invoke-NativeBuildTool $compiler @(
+    Invoke-NativeBuildTool $libraryManager @(
+        '/nologo',
+        '/machine:x64',
+        "/def:$(Join-Path $sourceDirectory 'version.def')",
+        "/out:$versionLibrary"
+    )
+    $compilerArguments = @(
         '/nologo',
         '/TC',
         '/c',
@@ -166,6 +182,10 @@ try {
         (Join-Path $sourceDirectory 'launcher.c'),
         "/Fo$objectPath"
     )
+    if ($IntegrationTestBuild) {
+        $compilerArguments += '/DUSAGE_INDICATOR_E2E_TEST'
+    }
+    Invoke-NativeBuildTool $compiler $compilerArguments
     Invoke-NativeBuildTool $linker @(
         '/nologo',
         '/machine:x64',
@@ -181,7 +201,9 @@ try {
         $objectPath,
         $kernelLibrary,
         $shellLibrary,
-        $userLibrary
+        $oleLibrary,
+        $userLibrary,
+        $versionLibrary
     )
     Set-UsageIndicatorVersionResource `
         -FilePath $resolvedOutput `

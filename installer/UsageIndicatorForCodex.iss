@@ -4,6 +4,9 @@
 #ifndef InstalledLauncher
   #error InstalledLauncher must be defined.
 #endif
+#ifndef UpdateHostPath
+  #error UpdateHostPath must be defined.
+#endif
 #ifndef ProductVersion
   #error ProductVersion must be defined.
 #endif
@@ -16,12 +19,18 @@
 #ifndef RepositoryLicensePath
   #error RepositoryLicensePath must be defined.
 #endif
+#ifndef InstallerAppId
+  #define InstallerAppId "{{3C77270D-28B4-45B7-BE77-B051195C969D}"
+#endif
+#ifndef InstallerStateSubKey
+  #define InstallerStateSubKey "Software\UsageIndicatorForCodex\Installer"
+#endif
 
 #define ProductName "Usage Indicator for Codex"
 #define ProductExecutable "UsageIndicatorForCodex.Gui.exe"
 
 [Setup]
-AppId={{3C77270D-28B4-45B7-BE77-B051195C969D}
+AppId={#InstallerAppId}
 AppName={#ProductName}
 AppVersion={#ProductVersion}
 AppVerName={#ProductName} {#ProductVersion}
@@ -29,7 +38,7 @@ AppPublisher=Usage Indicator for Codex contributors
 AppPublisherURL={#RepositoryUrl}
 AppSupportURL={#RepositoryUrl}
 AppUpdatesURL={#RepositoryUrl}/releases
-DefaultDirName={localappdata}\Programs\UsageIndicatorForCodex
+DefaultDirName={code:GetDefaultDirName}
 DefaultGroupName={#ProductName}
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
@@ -54,20 +63,25 @@ VersionInfoDescription={#ProductName} per-user installer
 [Files]
 Source: "{#PublishDirectory}\*"; DestDir: "{app}\app"; Excludes: "UsageIndicatorForCodex.exe,LICENSE.txt"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#RepositoryLicensePath}"; DestDir: "{app}\app"; DestName: "LICENSE.txt"; Flags: ignoreversion
-Source: "{#InstalledLauncher}"; DestDir: "{app}\bin"; DestName: "usage-indicator.exe"; Flags: ignoreversion
+Source: "{#InstalledLauncher}"; DestDir: "{app}\bin"; DestName: "usage-indicator.exe"; Flags: ignoreversion; Check: ShouldInstallLauncher
+Source: "{#UpdateHostPath}"; DestDir: "{app}\updater"; DestName: "UsageIndicatorForCodex.UpdateHost.exe"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Usage Indicator for Codex"; Filename: "{app}\app\{#ProductExecutable}"
-Name: "{group}\Uninstall Usage Indicator for Codex"; Filename: "{uninstallexe}"
+Name: "{group}\Usage Indicator for Codex"; Filename: "{app}\app\{#ProductExecutable}"; Check: ShouldCreateShortcuts
+Name: "{group}\Uninstall Usage Indicator for Codex"; Filename: "{uninstallexe}"; Check: ShouldCreateShortcuts
 
 [Run]
-Filename: "{app}\app\{#ProductExecutable}"; Description: "Start Usage Indicator for Codex"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\app\{#ProductExecutable}"; Description: "Start Usage Indicator for Codex"; Flags: nowait postinstall skipifsilent; Check: ShouldRunPostInstall
 
 [Code]
 const
   EnvironmentKey = 'Environment';
-  InstallerStateKey = 'Software\UsageIndicatorForCodex\Installer';
+  InstallerStateKey = '{#InstallerStateSubKey}';
   PathOwnershipValue = 'PathEntryOwned';
+  BootstrapVersionValue = 'BootstrapVersion';
+  InstallPathValue = 'InstallPath';
+  InstalledVersionValue = 'InstalledVersion';
+  SupportedBootstrapVersion = 1;
 
 var
   StartupPage: TWizardPage;
@@ -79,6 +93,161 @@ var
   StartupPreferenceKnown: Boolean;
   StartupCollisionDetected: Boolean;
   StartupUserChanged: Boolean;
+  CliUpdateMode: Boolean;
+  RecordedInstallPath: string;
+
+function NormalizeInstallPath(Value: string): string;
+begin
+  Result := RemoveBackslashUnlessRoot(ExpandFileName(Trim(Value)));
+end;
+
+function IsAbsoluteInstallPath(const Value: string): Boolean;
+begin
+  Result :=
+    (Length(Value) >= 3) and
+    (Value[2] = ':') and
+    ((Value[3] = '\') or (Value[3] = '/')) and
+    (CompareText(NormalizeInstallPath(Value), RemoveBackslashUnlessRoot(Trim(Value))) = 0);
+end;
+
+function IsCliUpdateCommandLine: Boolean;
+var
+  Index: Integer;
+begin
+  Result := False;
+  for Index := 1 to ParamCount do
+    if CompareText(ParamStr(Index), '/CLIUPDATE') = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+function ValidateCliUpdateInstallation: Boolean;
+var
+  InstalledBootstrapVersion: Cardinal;
+  InstalledVersion: string;
+begin
+  Result := False;
+  if ExpandConstant('{param:BOOTSTRAPVERSION|}') <> IntToStr(SupportedBootstrapVersion) then
+  begin
+    SuppressibleMsgBox(
+      'The private /CLIUPDATE mode requires bootstrap protocol version 1.',
+      mbCriticalError,
+      MB_OK,
+      IDOK);
+    Exit;
+  end;
+
+  if (not RegQueryDWordValue(
+        HKCU,
+        InstallerStateKey,
+        BootstrapVersionValue,
+        InstalledBootstrapVersion)) or
+     (InstalledBootstrapVersion <> SupportedBootstrapVersion) or
+     (not RegQueryStringValue(
+        HKCU,
+        InstallerStateKey,
+        InstallPathValue,
+        RecordedInstallPath)) or
+     (not RegQueryStringValue(
+        HKCU,
+        InstallerStateKey,
+        InstalledVersionValue,
+        InstalledVersion)) or
+     (InstalledVersion = '') or
+     (not IsAbsoluteInstallPath(RecordedInstallPath)) then
+  begin
+    SuppressibleMsgBox(
+      'The private /CLIUPDATE mode requires an existing bootstrap-v1 installation.',
+      mbCriticalError,
+      MB_OK,
+      IDOK);
+    Exit;
+  end;
+
+  RecordedInstallPath := NormalizeInstallPath(RecordedInstallPath);
+  if (not FileExists(RecordedInstallPath + '\bin\usage-indicator.exe')) or
+     (not FileExists(
+        RecordedInstallPath + '\updater\UsageIndicatorForCodex.UpdateHost.exe')) or
+     (not FileExists(
+        RecordedInstallPath + '\app\UsageIndicatorForCodex.Gui.exe')) then
+  begin
+    SuppressibleMsgBox(
+      'The private /CLIUPDATE mode requires a complete existing installation.',
+      mbCriticalError,
+      MB_OK,
+      IDOK);
+    Exit;
+  end;
+
+  Result := True;
+end;
+
+function InitializeSetup: Boolean;
+var
+  BootstrapParameter: string;
+begin
+  CliUpdateMode := IsCliUpdateCommandLine;
+  BootstrapParameter := ExpandConstant('{param:BOOTSTRAPVERSION|}');
+  if CliUpdateMode and (not WizardSilent) then
+  begin
+    Result := False;
+    Log('The private /CLIUPDATE mode requires silent installer execution.');
+  end
+  else if CliUpdateMode then
+    Result := ValidateCliUpdateInstallation
+  else
+  begin
+    Result := (BootstrapParameter = '') and (not WizardSilent);
+    if BootstrapParameter <> '' then
+      SuppressibleMsgBox(
+        '/BOOTSTRAPVERSION is valid only with the private /CLIUPDATE mode.',
+        mbCriticalError,
+        MB_OK,
+        IDOK)
+    else if WizardSilent then
+      SuppressibleMsgBox(
+        'Silent installation is supported only for a validated private /CLIUPDATE.',
+        mbCriticalError,
+        MB_OK,
+        IDOK);
+  end;
+end;
+
+function GetDefaultDirName(Param: string): string;
+begin
+  if CliUpdateMode and (RecordedInstallPath <> '') then
+    Result := RecordedInstallPath
+  else
+    Result := ExpandConstant('{localappdata}\Programs\UsageIndicatorForCodex');
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): string;
+begin
+  Result := '';
+  if CliUpdateMode and
+     (CompareText(
+        NormalizeInstallPath(ExpandConstant('{app}')),
+        RecordedInstallPath) <> 0) then
+    Result :=
+      'The private /CLIUPDATE mode cannot change the installer-owned install path.';
+end;
+
+function ShouldInstallLauncher: Boolean;
+begin
+  Result := not CliUpdateMode;
+end;
+
+function ShouldRunPostInstall: Boolean;
+begin
+  Result := not CliUpdateMode;
+end;
+
+function ShouldCreateShortcuts: Boolean;
+begin
+  Result := not CliUpdateMode;
+end;
 
 procedure StartupCheckBoxClick(Sender: TObject);
 begin
@@ -88,6 +257,9 @@ end;
 
 procedure InitializeWizard;
 begin
+  if CliUpdateMode then
+    Exit;
+
   StartupPage := CreateCustomPage(
     wpSelectTasks,
     'Startup',
@@ -193,6 +365,9 @@ procedure InitializeStartupPage;
 var
   StartupEnabled: Boolean;
 begin
+  if CliUpdateMode then
+    Exit;
+
   if StartupPageInitialized then
     Exit;
 
@@ -215,7 +390,7 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
-  if CurPageID = StartupPage.ID then
+  if (not CliUpdateMode) and (CurPageID = StartupPage.ID) then
     InitializeStartupPage;
 end;
 
@@ -250,6 +425,9 @@ end;
 
 procedure ApplyStartupPreference;
 begin
+  if CliUpdateMode then
+    Exit;
+
   if StartupCollisionDetected then
     Exit;
 
@@ -371,6 +549,9 @@ var
   PathValue: string;
   BinPath: string;
 begin
+  if CliUpdateMode then
+    Exit;
+
   BinPath := ExpandConstant('{app}\bin');
   if not RegQueryStringValue(HKCU, EnvironmentKey, 'Path', PathValue) then
     PathValue := '';
@@ -445,12 +626,44 @@ begin
   RegDeleteKeyIfEmpty(HKCU, InstallerStateKey);
 end;
 
+procedure RemoveInstallerState;
+begin
+  RegDeleteValue(HKCU, InstallerStateKey, BootstrapVersionValue);
+  RegDeleteValue(HKCU, InstallerStateKey, InstallPathValue);
+  RegDeleteValue(HKCU, InstallerStateKey, InstalledVersionValue);
+  RegDeleteValue(HKCU, InstallerStateKey, PathOwnershipValue);
+  RegDeleteKeyIfEmpty(HKCU, InstallerStateKey);
+end;
+
+procedure WriteInstalledState;
+var
+  InstallPath: string;
+begin
+  InstallPath := NormalizeInstallPath(ExpandConstant('{app}'));
+  if not RegWriteStringValue(
+      HKCU, InstallerStateKey, InstallPathValue, InstallPath) then
+    RaiseException('The installer-owned install path could not be recorded.');
+  if not RegWriteStringValue(
+      HKCU, InstallerStateKey, InstalledVersionValue, '{#ProductVersion}') then
+    RaiseException('The installed version could not be recorded.');
+  if not RegWriteDWordValue(
+      HKCU,
+      InstallerStateKey,
+      BootstrapVersionValue,
+      SupportedBootstrapVersion) then
+    RaiseException('The bootstrap protocol version could not be recorded.');
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
-    AddOwnedBinToPath;
-    ApplyStartupPreference;
+    if not CliUpdateMode then
+    begin
+      AddOwnedBinToPath;
+      ApplyStartupPreference;
+    end;
+    WriteInstalledState;
   end;
 end;
 
@@ -460,5 +673,6 @@ begin
   begin
     RunStartupCleanupForUninstall;
     RemoveOwnedBinFromPath;
+    RemoveInstallerState;
   end;
 end;

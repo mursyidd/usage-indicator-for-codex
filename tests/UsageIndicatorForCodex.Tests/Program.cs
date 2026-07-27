@@ -2,6 +2,7 @@ using UsageIndicatorForCodex;
 using UsageIndicatorForCodex.Core;
 using UsageIndicatorForCodex.Interop;
 using UsageIndicatorForCodex.Services;
+using UsageIndicatorForCodex.Update;
 using UsageIndicatorForCodex.Views;
 using System.Diagnostics;
 using System.IO;
@@ -102,16 +103,24 @@ var checks = new (string Name, Action Run)[]
     ("coalesces overlapping refresh requests", CoalescesOverlappingRefreshRequests),
     ("cancels and replaces refresh requests", CancelsAndReplacesRefreshRequests),
     ("parses application commands strictly", ParsesApplicationCommandsStrictly),
+    ("keeps update execution outside WPF and parses the private host contract strictly", DefinesStandaloneUpdateBoundary),
     ("selects stable updates and exact release assets", SelectsStableUpdatesAndExactAssets),
     ("checks for updates without downloading assets", ChecksForUpdatesWithoutDownloadingAssets),
     ("downloads only checksum-verified installers", DownloadsOnlyChecksumVerifiedInstallers),
     ("rejects invalid update checksums and repository URLs", RejectsInvalidUpdatesAndRepositoryUrls),
     ("rejects concurrent updates before update work begins", RejectsConcurrentUpdatesBeforeWork),
+    ("keeps update checks lock-free and free of process mutation", KeepsUpdateChecksLockFree),
     ("recovers an abandoned per-user update mutex", RecoversAbandonedUpdateMutex),
     ("releases the update mutex after completion", ReleasesUpdateMutexAfterCompletion),
     ("releases the update mutex after update failure", ReleasesUpdateMutexAfterFailure),
     ("releases the update mutex after cancellation", ReleasesUpdateMutexAfterCancellation),
-    ("keeps the update mutex through successful installer handoff", KeepsUpdateMutexThroughInstallerHandoff),
+    ("orchestrates a successful silent update through validation and restart", OrchestratesSuccessfulSilentUpdate),
+    ("rejects unverified installers before process mutation", RejectsUnverifiedInstallerBeforeProcessMutation),
+    ("keeps a previously stopped indicator stopped after update", KeepsPreviouslyStoppedIndicatorStopped),
+    ("propagates validated installer restart requirements without restarting", PropagatesValidatedRestartRequirement),
+    ("fails closed for installer, validation, and restart failures", RejectsIncompleteUpdateOutcomes),
+    ("cleans every prepared update and restores only eligible failed updates", CleansPreparedUpdatesAndRestoresEligibleFailures),
+    ("uses the exact private Inno Setup argument contract", UsesExactSilentInstallerArguments),
     ("routes commands to a single primary instance", RoutesCommandsToPrimaryInstance),
     ("coordinates canonical and legacy instance identities", CoordinatesCanonicalAndLegacyInstances),
     ("serves the canonical stop command pipe", ServesCanonicalStopCommandPipe),
@@ -571,15 +580,15 @@ static void ParsesApplicationCommandsStrictly()
 
 static void SelectsStableUpdatesAndExactAssets()
 {
-    var release = ReleaseUpdateService.ParseLatestStableRelease(CreateReleaseJson("0.3.0"));
+    var release = ReleaseUpdateClient.ParseLatestStableRelease(CreateReleaseJson("0.3.0"));
     AssertEqual(new Version(0, 3, 0), release.Version);
     AssertEqual(
         "UsageIndicatorForCodex-Setup-v0.3.0.exe",
-        ReleaseUpdateService.SelectExactAsset(
+        ReleaseUpdateClient.SelectExactAsset(
             release,
             "UsageIndicatorForCodex-Setup-v0.3.0.exe").Name);
     AssertThrows<InvalidDataException>(() =>
-        ReleaseUpdateService.SelectExactAsset(
+        ReleaseUpdateClient.SelectExactAsset(
             release,
             "usageindicatorforcodex-setup-v0.3.0.exe"));
 
@@ -588,9 +597,60 @@ static void SelectsStableUpdatesAndExactAssets()
         "\"prerelease\": true",
         StringComparison.Ordinal);
     AssertThrows<InvalidDataException>(() =>
-        ReleaseUpdateService.ParseLatestStableRelease(prerelease));
+        ReleaseUpdateClient.ParseLatestStableRelease(prerelease));
     AssertThrows<InvalidDataException>(() =>
-        ReleaseUpdateService.ParseLatestStableRelease(CreateReleaseJson("0.3.0-beta")));
+        ReleaseUpdateClient.ParseLatestStableRelease(CreateReleaseJson("0.3.0-beta")));
+}
+
+static void DefinesStandaloneUpdateBoundary()
+{
+    AssertEqual(
+        false,
+        typeof(UpdateOrchestrator).Assembly
+            .GetReferencedAssemblies()
+            .Any(reference => reference.Name is "PresentationFramework" or "PresentationCore"));
+    var parsed = UpdateHostArguments.Parse(
+    [
+        "--command",
+        "update",
+        "--install-root",
+        @"C:\Program Files\Usage Indicator",
+        "--bootstrap-version",
+        ProductConstants.BootstrapProtocolVersion.ToString()
+    ]);
+    AssertEqual(UpdateHostCommand.Update, parsed.Command);
+    AssertEqual(
+        Path.GetFullPath(@"C:\Program Files\Usage Indicator"),
+        parsed.InstallRoot);
+    AssertEqual(ProductConstants.BootstrapProtocolVersion, parsed.BootstrapVersion);
+
+    AssertThrows<ArgumentException>(() => UpdateHostArguments.Parse(
+    [
+        "--command",
+        "UPDATE",
+        "--install-root",
+        @"C:\Program Files\Usage Indicator",
+        "--bootstrap-version",
+        ProductConstants.BootstrapProtocolVersion.ToString()
+    ]));
+    AssertThrows<ArgumentException>(() => UpdateHostArguments.Parse(
+    [
+        "--command",
+        "update",
+        "--install-root",
+        "relative",
+        "--bootstrap-version",
+        ProductConstants.BootstrapProtocolVersion.ToString()
+    ]));
+    AssertThrows<ArgumentException>(() => UpdateHostArguments.Parse(
+    [
+        "--command",
+        "update",
+        "--install-root",
+        @"C:\Program Files\Usage Indicator",
+        "--bootstrap-version",
+        (ProductConstants.BootstrapProtocolVersion + 1).ToString()
+    ]));
 }
 
 static void ChecksForUpdatesWithoutDownloadingAssets()
@@ -603,7 +663,7 @@ static void ChecksForUpdatesWithoutDownloadingAssets()
         return JsonResponse(CreateReleaseJson("0.3.0"));
     });
     using var client = new HttpClient(handler);
-    var result = new ReleaseUpdateService(
+    var result = new ReleaseUpdateClient(
             client,
             "https://github.com/example/project",
             ProductInfo.Version)
@@ -641,18 +701,32 @@ static void DownloadsOnlyChecksumVerifiedInstallers()
 
         throw new InvalidOperationException($"Unexpected request: {uri}");
     });
-    using var client = new HttpClient(handler);
+    using var httpClient = new HttpClient(handler);
     WithTemporaryDirectory("Usage Indicator Update", directory =>
     {
-        var installerPath = new ReleaseUpdateService(
-                client,
+        var releaseClient = new ReleaseUpdateClient(
+                httpClient,
                 "https://github.com/example/project",
-                ProductInfo.Version)
-            .PrepareUpdateAsync(directory, CancellationToken.None)
+                ProductInfo.Version);
+        var check = releaseClient
+            .CheckAsync(CancellationToken.None)
             .GetAwaiter()
             .GetResult();
-        AssertEqual(installerName, Path.GetFileName(installerPath!));
-        AssertEqual(true, installerBytes.SequenceEqual(File.ReadAllBytes(installerPath!)));
+        var verificationStarted = false;
+        var prepared = releaseClient
+            .PrepareAsync(
+                check.LatestRelease,
+                directory,
+                () => verificationStarted = true,
+                CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        AssertEqual(true, verificationStarted);
+        AssertEqual(installerName, Path.GetFileName(prepared.InstallerPath));
+        AssertEqual(
+            Path.GetFullPath(Path.GetDirectoryName(prepared.InstallerPath)!),
+            prepared.WorkingDirectory);
+        AssertEqual(true, installerBytes.SequenceEqual(File.ReadAllBytes(prepared.InstallerPath)));
     });
 }
 
@@ -660,24 +734,50 @@ static void RejectsInvalidUpdatesAndRepositoryUrls()
 {
     AssertEqual(
         "https://api.github.com/repos/example/project/releases/latest",
-        ReleaseUpdateService.CreateLatestReleaseApiUri(
+        ReleaseUpdateClient.CreateLatestReleaseApiUri(
             "https://github.com/example/project.git").AbsoluteUri);
     AssertThrows<InvalidOperationException>(() =>
-        ReleaseUpdateService.CreateLatestReleaseApiUri("https://example.invalid/owner/project"));
+        ReleaseUpdateClient.CreateLatestReleaseApiUri("https://example.invalid/owner/project"));
     AssertThrows<InvalidOperationException>(() =>
-        ReleaseUpdateService.CreateLatestReleaseApiUri("https://github.com/owner/project/extra"));
+        ReleaseUpdateClient.CreateLatestReleaseApiUri("https://github.com/owner/project/extra"));
+
+    var loopbackReleaseJson = CreateReleaseJson("0.3.0").Replace(
+        "https://github.com/example/project",
+        "http://127.0.0.1:43127",
+        StringComparison.Ordinal);
+    AssertThrows<InvalidDataException>(() =>
+        ReleaseUpdateClient.ParseLatestStableRelease(loopbackReleaseJson));
+    var loopbackRelease = ReleaseUpdateClient.ParseLatestStableRelease(
+        loopbackReleaseJson,
+        allowLoopbackHttp: true);
+    AssertEqual(
+        "http://127.0.0.1:43127/releases/download/v0.3.0/UsageIndicatorForCodex-Setup-v0.3.0.exe",
+        loopbackRelease.Assets["UsageIndicatorForCodex-Setup-v0.3.0.exe"].DownloadUri.AbsoluteUri);
+    using var loopbackHttpClient = new HttpClient(new RecordingHttpMessageHandler(
+        _ => JsonResponse(loopbackReleaseJson)));
+    _ = new ReleaseUpdateClient(
+        loopbackHttpClient,
+        new Uri("http://127.0.0.1:43127/releases/latest"),
+        ProductInfo.Version,
+        allowLoopbackHttp: true);
+    AssertThrows<InvalidOperationException>(() =>
+        _ = new ReleaseUpdateClient(
+            loopbackHttpClient,
+            new Uri("http://example.invalid/releases/latest"),
+            ProductInfo.Version,
+            allowLoopbackHttp: true));
 
     var bytes = Encoding.UTF8.GetBytes("verified content");
     var hash = SHA256.HashData(bytes);
-    AssertEqual(true, ReleaseUpdateService.ChecksumMatches(bytes, hash));
+    AssertEqual(true, ReleaseUpdateClient.ChecksumMatches(bytes, hash));
     hash[0] ^= 0xff;
-    AssertEqual(false, ReleaseUpdateService.ChecksumMatches(bytes, hash));
+    AssertEqual(false, ReleaseUpdateClient.ChecksumMatches(bytes, hash));
     AssertThrows<InvalidDataException>(() =>
-        ReleaseUpdateService.ParseChecksum(
+        ReleaseUpdateClient.ParseChecksum(
             $"{new string('0', 64)}  Wrong.exe",
             "UsageIndicatorForCodex-Setup-v0.3.0.exe"));
     AssertThrows<InvalidDataException>(() =>
-        ReleaseUpdateService.ParseChecksum(
+        ReleaseUpdateClient.ParseChecksum(
             $"{new string('0', 64)}  UsageIndicatorForCodex-Setup-v0.3.0.exe\n"
             + $"{new string('0', 64)}  extra.exe",
             "UsageIndicatorForCodex-Setup-v0.3.0.exe"));
@@ -689,38 +789,52 @@ static void RejectsConcurrentUpdatesBeforeWork()
     var mutexName = $"Local\\UsageIndicatorForCodex-Update-{userIdentity}";
     WithMutexOwnedOnAnotherThread(mutexName, () =>
     {
-        using var blocked = new UpdateMutexService(userIdentity);
+        using var blocked = new UpdateMutexLease(userIdentity);
         AssertEqual(mutexName, blocked.MutexName);
         AssertEqual(false, blocked.IsAcquired);
     });
 
-    var disposed = false;
-    var updateWorkStarted = false;
-    var result = UpdateCommandRunner.ExecuteAsync(
-            () => new RecordingUpdateMutexLease(
-                isAcquired: false,
-                () => disposed = true),
-            _ =>
-            {
-                updateWorkStarted = true;
-                return Task.FromResult<string?>(null);
-            },
-            () =>
-            {
-                updateWorkStarted = true;
-                return Task.FromResult(true);
-            },
-            _ => updateWorkStarted = true,
-            ProductInfo.Version,
-            CancellationToken.None)
+    var scenario = new RecordingUpdateScenario
+    {
+        MutexAcquired = false
+    };
+    var result = scenario.CreateOrchestrator()
+        .UpdateAsync(CancellationToken.None)
         .GetAwaiter()
         .GetResult();
 
     AssertEqual(1, result.ExitCode);
-    AssertEqual("An update is already in progress.", result.Message);
-    AssertEqual(true, result.IsError);
-    AssertEqual(false, updateWorkStarted);
-    AssertEqual(true, disposed);
+    AssertEqual(
+        "lock,err:An update is already in progress.,release",
+        string.Join(',', scenario.Operations));
+    AssertEqual(true, scenario.MutexDisposed);
+}
+
+static void KeepsUpdateChecksLockFree()
+{
+    var available = new RecordingUpdateScenario();
+    var result = available.CreateOrchestrator()
+        .CheckAsync(CancellationToken.None)
+        .GetAwaiter()
+        .GetResult();
+    AssertEqual(0, result.ExitCode);
+    AssertEqual(
+        "out:Checking for updates...,check,out:Update available: 0.3.0 (current 0.2.0).",
+        string.Join(',', available.Operations));
+    AssertEqual(false, available.Operations.Contains("lock"));
+
+    var current = new RecordingUpdateScenario
+    {
+        IsAvailable = false
+    };
+    var currentResult = current.CreateOrchestrator()
+        .UpdateAsync(CancellationToken.None)
+        .GetAwaiter()
+        .GetResult();
+    AssertEqual(0, currentResult.ExitCode);
+    AssertEqual(
+        "lock,out:Checking for updates...,check,out:Up to date: 0.2.0.,release",
+        string.Join(',', current.Operations));
 }
 
 static void RecoversAbandonedUpdateMutex()
@@ -738,7 +852,7 @@ static void RecoversAbandonedUpdateMutex()
     AssertEqual(true, acquired.Wait(TimeSpan.FromSeconds(5)));
     AssertEqual(true, abandoningThread.Join(TimeSpan.FromSeconds(5)));
 
-    using var recovered = new UpdateMutexService(userIdentity);
+    using var recovered = new UpdateMutexLease(userIdentity);
     AssertEqual(mutexName, recovered.MutexName);
     AssertEqual(true, recovered.IsAcquired);
 }
@@ -746,113 +860,289 @@ static void RecoversAbandonedUpdateMutex()
 static void ReleasesUpdateMutexAfterCompletion()
 {
     var userIdentity = $"cleanup-{Guid.NewGuid():N}";
-    using (var first = new UpdateMutexService(userIdentity))
+    using (var first = new UpdateMutexLease(userIdentity))
     {
         AssertEqual(true, first.IsAcquired);
     }
 
-    using var second = new UpdateMutexService(userIdentity);
+    using var second = new UpdateMutexLease(userIdentity);
     AssertEqual(true, second.IsAcquired);
 }
 
 static void ReleasesUpdateMutexAfterFailure()
 {
-    var disposed = false;
+    var scenario = new RecordingUpdateScenario
+    {
+        CheckFailure = new InvalidDataException("Release metadata mismatch.")
+    };
     AssertThrows<InvalidDataException>(() =>
-        UpdateCommandRunner.ExecuteAsync(
-                () => new RecordingUpdateMutexLease(
-                    isAcquired: true,
-                    () => disposed = true),
-                _ => throw new InvalidDataException("Checksum mismatch."),
-                () => Task.FromResult(true),
-                _ => throw new InvalidOperationException("Must not launch."),
-                ProductInfo.Version,
-                CancellationToken.None)
+        scenario.CreateOrchestrator()
+            .UpdateAsync(CancellationToken.None)
             .GetAwaiter()
             .GetResult());
-    AssertEqual(true, disposed);
+    AssertEqual(true, scenario.MutexDisposed);
+    AssertEqual("release", scenario.Operations[^1]);
 }
 
 static void ReleasesUpdateMutexAfterCancellation()
 {
-    var disposed = false;
     using var cancellation = new CancellationTokenSource();
     cancellation.Cancel();
+    var scenario = new RecordingUpdateScenario();
     AssertThrows<OperationCanceledException>(() =>
-        UpdateCommandRunner.ExecuteAsync(
-                () => new RecordingUpdateMutexLease(
-                    isAcquired: true,
-                    () => disposed = true),
-                token => Task.FromCanceled<string?>(token),
-                () => Task.FromResult(true),
-                _ => throw new InvalidOperationException("Must not launch."),
-                ProductInfo.Version,
-                cancellation.Token)
+        scenario.CreateOrchestrator()
+            .UpdateAsync(cancellation.Token)
             .GetAwaiter()
             .GetResult());
-    AssertEqual(true, disposed);
+    AssertEqual(true, scenario.MutexDisposed);
+    AssertEqual("release", scenario.Operations[^1]);
 }
 
-static void KeepsUpdateMutexThroughInstallerHandoff()
+static void OrchestratesSuccessfulSilentUpdate()
 {
-    var operations = new List<string>();
-    var result = UpdateCommandRunner.ExecuteAsync(
-            () =>
-            {
-                operations.Add("lock");
-                return new RecordingUpdateMutexLease(
-                    isAcquired: true,
-                    () => operations.Add("release"));
-            },
-            _ =>
-            {
-                operations.Add("prepare");
-                return Task.FromResult<string?>(@"C:\Updates\Setup.exe");
-            },
-            () =>
-            {
-                operations.Add("stop");
-                return Task.FromResult(true);
-            },
-            path =>
-            {
-                AssertEqual(@"C:\Updates\Setup.exe", path);
-                operations.Add("launch");
-            },
-            ProductInfo.Version,
-            CancellationToken.None)
+    var scenario = new RecordingUpdateScenario
+    {
+        WasRunning = true
+    };
+    var result = scenario.CreateOrchestrator()
+        .UpdateAsync(CancellationToken.None)
         .GetAwaiter()
         .GetResult();
 
     AssertEqual(0, result.ExitCode);
-    AssertEqual("Launching verified installer Setup.exe.", result.Message);
     AssertEqual(
-        "lock,prepare,stop,launch,release",
-        string.Join(',', operations));
+        "lock,"
+        + "out:Checking for updates...,"
+        + "check,"
+        + "out:Update available: 0.3.0 (current 0.2.0).,"
+        + "out:Downloading installer...,"
+        + "download,"
+        + "out:Verifying SHA-256...,"
+        + "verified,"
+        + "inspect,"
+        + "out:Stopping Usage Indicator for Codex...,"
+        + "stop,"
+        + "out:Installing 0.3.0...,"
+        + "install,"
+        + "out:Validating installed version...,"
+        + "validate,"
+        + "out:Restarting Usage Indicator for Codex...,"
+        + "start,"
+        + "out:Updated successfully: 0.2.0 -> 0.3.0.,"
+        + "cleanup,"
+        + "release",
+        string.Join(',', scenario.Operations));
+    AssertEqual(ProductConstants.BootstrapProtocolVersion, scenario.InstallerBootstrapVersion);
+    AssertEqual(true, scenario.InstallerLogPath!.Contains("v0.3.0", StringComparison.Ordinal));
+}
 
-    var noUpdateDisposed = false;
-    var stopped = false;
-    var launched = false;
-    var noUpdate = UpdateCommandRunner.ExecuteAsync(
-            () => new RecordingUpdateMutexLease(
-                isAcquired: true,
-                () => noUpdateDisposed = true),
-            _ => Task.FromResult<string?>(null),
-            () =>
-            {
-                stopped = true;
-                return Task.FromResult(true);
-            },
-            _ => launched = true,
-            ProductInfo.Version,
-            CancellationToken.None)
+static void RejectsUnverifiedInstallerBeforeProcessMutation()
+{
+    var scenario = new RecordingUpdateScenario
+    {
+        WasRunning = true,
+        PrepareFailure = new InvalidDataException("SHA-256 mismatch.")
+    };
+    AssertThrows<InvalidDataException>(() =>
+        scenario.CreateOrchestrator()
+            .UpdateAsync(CancellationToken.None)
+            .GetAwaiter()
+            .GetResult());
+    foreach (var forbiddenOperation in new[] { "inspect", "stop", "install", "validate", "start" })
+    {
+        AssertEqual(false, scenario.Operations.Contains(forbiddenOperation));
+    }
+}
+
+static void KeepsPreviouslyStoppedIndicatorStopped()
+{
+    var scenario = new RecordingUpdateScenario
+    {
+        WasRunning = false
+    };
+    var result = scenario.CreateOrchestrator()
+        .UpdateAsync(CancellationToken.None)
         .GetAwaiter()
         .GetResult();
-    AssertEqual(0, noUpdate.ExitCode);
-    AssertEqual($"Up to date: {ProductInfo.Version}.", noUpdate.Message);
-    AssertEqual(false, stopped);
-    AssertEqual(false, launched);
-    AssertEqual(true, noUpdateDisposed);
+    AssertEqual(0, result.ExitCode);
+    AssertEqual(false, scenario.Operations.Contains("stop"));
+    AssertEqual(false, scenario.Operations.Contains("start"));
+    AssertEqual(true, scenario.Operations.Contains("validate"));
+}
+
+static void PropagatesValidatedRestartRequirement()
+{
+    var scenario = new RecordingUpdateScenario
+    {
+        WasRunning = true,
+        InstallerExitCode = 3010
+    };
+    var result = scenario.CreateOrchestrator()
+        .UpdateAsync(CancellationToken.None)
+        .GetAwaiter()
+        .GetResult();
+    AssertEqual(3010, result.ExitCode);
+    AssertEqual(true, scenario.Operations.Contains("validate"));
+    AssertEqual(false, scenario.Operations.Contains("start"));
+    AssertEqual(
+        false,
+        scenario.Operations.Any(operation =>
+            operation.Contains("Updated successfully:", StringComparison.Ordinal)));
+    AssertEqual(
+        true,
+        scenario.Operations.Any(operation =>
+            operation.Contains("Windows must be restarted", StringComparison.Ordinal)));
+    AssertEqual(true, scenario.Operations.Contains("cleanup"));
+}
+
+static void RejectsIncompleteUpdateOutcomes()
+{
+    var installerFailure = new RecordingUpdateScenario
+    {
+        WasRunning = true,
+        InstallerExitCode = 5
+    };
+    var installerException = AssertThrowsAndReturn<UpdateFailureException>(() =>
+        installerFailure.CreateOrchestrator()
+            .UpdateAsync(CancellationToken.None)
+            .GetAwaiter()
+            .GetResult());
+    AssertEqual(true, installerException.Message.Contains("exited with code 5", StringComparison.Ordinal));
+    AssertEqual(true, installerException.Message.Contains("Installer log:", StringComparison.Ordinal));
+    AssertEqual(false, installerFailure.Operations.Contains("validate"));
+    AssertEqual(true, installerFailure.Operations.Contains("start"));
+    AssertEqual(true, installerFailure.Operations.Contains("cleanup"));
+
+    var validationFailure = new RecordingUpdateScenario
+    {
+        WasRunning = true,
+        ValidationFailure = new InvalidDataException("Installed host is old.")
+    };
+    var validationException = AssertThrowsAndReturn<UpdateFailureException>(() =>
+        validationFailure.CreateOrchestrator()
+            .UpdateAsync(CancellationToken.None)
+            .GetAwaiter()
+            .GetResult());
+    AssertEqual(true, validationException.Message.Contains("validation failed", StringComparison.Ordinal));
+    AssertEqual(true, validationFailure.Operations.Contains("start"));
+    AssertEqual(true, validationFailure.Operations.Contains("cleanup"));
+    AssertEqual(
+        false,
+        validationFailure.Operations.Any(operation =>
+            operation.Contains("Updated successfully:", StringComparison.Ordinal)));
+
+    var restartFailure = new RecordingUpdateScenario
+    {
+        WasRunning = true,
+        StartFailure = new InvalidOperationException("No primary instance.")
+    };
+    var restartException = AssertThrowsAndReturn<UpdateFailureException>(() =>
+        restartFailure.CreateOrchestrator()
+            .UpdateAsync(CancellationToken.None)
+            .GetAwaiter()
+            .GetResult());
+    AssertEqual(true, restartException.Message.Contains("could not be restarted", StringComparison.Ordinal));
+    AssertEqual(true, restartFailure.Operations.Contains("validate"));
+    AssertEqual(true, restartFailure.Operations.Contains("cleanup"));
+    AssertEqual(
+        false,
+        restartFailure.Operations.Any(operation =>
+            operation.Contains("Updated successfully:", StringComparison.Ordinal)));
+}
+
+static void CleansPreparedUpdatesAndRestoresEligibleFailures()
+{
+    var previouslyStoppedFailure = new RecordingUpdateScenario
+    {
+        WasRunning = false,
+        InstallerExitCode = 5
+    };
+    _ = AssertThrowsAndReturn<UpdateFailureException>(() =>
+        previouslyStoppedFailure.CreateOrchestrator()
+            .UpdateAsync(CancellationToken.None)
+            .GetAwaiter()
+            .GetResult());
+    AssertEqual(false, previouslyStoppedFailure.Operations.Contains("start"));
+    AssertEqual(true, previouslyStoppedFailure.Operations.Contains("cleanup"));
+
+    var failedStop = new RecordingUpdateScenario
+    {
+        WasRunning = true,
+        StopFailure = new InvalidOperationException("Stop failed.")
+    };
+    _ = AssertThrowsAndReturn<InvalidOperationException>(() =>
+        failedStop.CreateOrchestrator()
+            .UpdateAsync(CancellationToken.None)
+            .GetAwaiter()
+            .GetResult());
+    AssertEqual(false, failedStop.Operations.Contains("start"));
+    AssertEqual(true, failedStop.Operations.Contains("cleanup"));
+
+    var restorationFailure = new RecordingUpdateScenario
+    {
+        WasRunning = true,
+        InstallerExitCode = 5,
+        StartFailure = new InvalidOperationException("Restore failed.")
+    };
+    var primary = AssertThrowsAndReturn<UpdateFailureException>(() =>
+        restorationFailure.CreateOrchestrator()
+            .UpdateAsync(CancellationToken.None)
+            .GetAwaiter()
+            .GetResult());
+    AssertEqual(true, primary.Message.Contains("exited with code 5", StringComparison.Ordinal));
+    AssertEqual(false, primary.Message.Contains("Restore failed.", StringComparison.Ordinal));
+    AssertEqual(
+        true,
+        restorationFailure.Operations.Any(operation =>
+            operation.Contains("Restoration also failed", StringComparison.Ordinal)));
+    AssertEqual(
+        false,
+        restorationFailure.Operations.Any(operation =>
+            operation.Contains("Updated successfully:", StringComparison.Ordinal)));
+    AssertEqual(true, restorationFailure.Operations.Contains("cleanup"));
+
+    var cleanupFailureAfterSuccess = new RecordingUpdateScenario
+    {
+        CleanupFailure = new IOException("Directory is busy.")
+    };
+    var success = cleanupFailureAfterSuccess.CreateOrchestrator()
+        .UpdateAsync(CancellationToken.None)
+        .GetAwaiter()
+        .GetResult();
+    AssertEqual(0, success.ExitCode);
+    AssertEqual(
+        true,
+        cleanupFailureAfterSuccess.Operations.Any(operation =>
+            operation.Contains("could not be deleted", StringComparison.Ordinal)));
+
+    var cleanupFailureAfterPrimaryFailure = new RecordingUpdateScenario
+    {
+        InstallerExitCode = 5,
+        CleanupFailure = new IOException("Directory is busy.")
+    };
+    var preservedPrimary = AssertThrowsAndReturn<UpdateFailureException>(() =>
+        cleanupFailureAfterPrimaryFailure.CreateOrchestrator()
+            .UpdateAsync(CancellationToken.None)
+            .GetAwaiter()
+            .GetResult());
+    AssertEqual(true, preservedPrimary.Message.Contains("exited with code 5", StringComparison.Ordinal));
+    AssertEqual(false, preservedPrimary.Message.Contains("Directory is busy.", StringComparison.Ordinal));
+}
+
+static void UsesExactSilentInstallerArguments()
+{
+    var logPath = Path.GetFullPath(@"C:\Update Logs\installer.log");
+    AssertEqual(
+        "/VERYSILENT|/SUPPRESSMSGBOXES|/SP-|/NORESTART|/RESTARTEXITCODE=3010"
+        + "|/CLOSEAPPLICATIONS|/NOFORCECLOSEAPPLICATIONS|/NORESTARTAPPLICATIONS"
+        + $"|/LOG={logPath}|/CLIUPDATE|/BOOTSTRAPVERSION=1",
+        string.Join(
+            '|',
+            InstallerRunner.CreateArguments(
+                logPath,
+                ProductConstants.BootstrapProtocolVersion)));
+    AssertThrows<ArgumentOutOfRangeException>(() =>
+        InstallerRunner.CreateArguments(logPath, ProductConstants.BootstrapProtocolVersion + 1));
 }
 
 static string CreateReleaseJson(string version) => $$"""
@@ -2353,6 +2643,158 @@ internal sealed class RecordingHttpMessageHandler(
         Requests.Add(request);
         return Task.FromResult(responseFactory(request));
     }
+}
+
+internal sealed class RecordingUpdateScenario :
+    IReleaseUpdateClient,
+    IIndicatorController,
+    IInstallerRunner,
+    IInstalledVersionValidator,
+    IUpdateWorkingDirectoryCleaner,
+    IUpdateOutput
+{
+    private readonly Version _currentVersion = new(0, 2, 0);
+    private readonly StableRelease _latestRelease = new(
+        new Version(0, 3, 0),
+        "v0.3.0",
+        new Dictionary<string, ReleaseAsset>(StringComparer.Ordinal));
+
+    internal List<string> Operations { get; } = [];
+    internal bool MutexAcquired { get; init; } = true;
+    internal bool MutexDisposed { get; private set; }
+    internal bool IsAvailable { get; init; } = true;
+    internal bool WasRunning { get; init; }
+    internal int InstallerExitCode { get; init; }
+    internal int InstallerBootstrapVersion { get; private set; }
+    internal string? InstallerLogPath { get; private set; }
+    internal Exception? CheckFailure { get; init; }
+    internal Exception? PrepareFailure { get; init; }
+    internal Exception? StopFailure { get; init; }
+    internal Exception? InstallerFailure { get; init; }
+    internal Exception? ValidationFailure { get; init; }
+    internal Exception? StartFailure { get; init; }
+    internal Exception? CleanupFailure { get; init; }
+
+    internal UpdateOrchestrator CreateOrchestrator() =>
+        new(
+            this,
+            () =>
+            {
+                Operations.Add("lock");
+                return new RecordingUpdateMutexLease(
+                    MutexAcquired,
+                    () =>
+                    {
+                        MutexDisposed = true;
+                        Operations.Add("release");
+                    });
+            },
+            this,
+            this,
+            this,
+            this,
+            this,
+            new UpdatePaths(
+                @"C:\Program Files\Usage Indicator",
+                @"C:\Update Work",
+                @"C:\Update Logs"));
+
+    public Task<UpdateCheckResult> CheckAsync(CancellationToken cancellationToken)
+    {
+        Operations.Add("check");
+        cancellationToken.ThrowIfCancellationRequested();
+        if (CheckFailure is not null)
+        {
+            throw CheckFailure;
+        }
+
+        return Task.FromResult(new UpdateCheckResult(
+            _currentVersion,
+            _latestRelease,
+            IsAvailable));
+    }
+
+    public Task<PreparedUpdate> PrepareAsync(
+        StableRelease release,
+        string destinationRoot,
+        Action verificationStarted,
+        CancellationToken cancellationToken)
+    {
+        Operations.Add("download");
+        cancellationToken.ThrowIfCancellationRequested();
+        if (PrepareFailure is not null)
+        {
+            throw PrepareFailure;
+        }
+
+        verificationStarted();
+        Operations.Add("verified");
+        return Task.FromResult(new PreparedUpdate(
+            release.Version,
+            @"C:\Update Work With Spaces\UsageIndicatorForCodex-Setup-v0.3.0.exe",
+            @"C:\Update Work With Spaces"));
+    }
+
+    public bool IsRunning()
+    {
+        Operations.Add("inspect");
+        return WasRunning;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        Operations.Add("stop");
+        cancellationToken.ThrowIfCancellationRequested();
+        return StopFailure is null
+            ? Task.CompletedTask
+            : Task.FromException(StopFailure);
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        Operations.Add("start");
+        cancellationToken.ThrowIfCancellationRequested();
+        return StartFailure is null
+            ? Task.CompletedTask
+            : Task.FromException(StartFailure);
+    }
+
+    public Task<int> RunAsync(
+        string installerPath,
+        string logPath,
+        int bootstrapVersion,
+        CancellationToken cancellationToken)
+    {
+        Operations.Add("install");
+        cancellationToken.ThrowIfCancellationRequested();
+        InstallerLogPath = logPath;
+        InstallerBootstrapVersion = bootstrapVersion;
+        return InstallerFailure is null
+            ? Task.FromResult(InstallerExitCode)
+            : Task.FromException<int>(InstallerFailure);
+    }
+
+    public void Validate(string installRoot, Version targetVersion)
+    {
+        Operations.Add("validate");
+        if (ValidationFailure is not null)
+        {
+            throw ValidationFailure;
+        }
+    }
+
+    public void Delete(string workingDirectory)
+    {
+        Operations.Add("cleanup");
+        if (CleanupFailure is not null)
+        {
+            throw CleanupFailure;
+        }
+    }
+
+    public void WriteLine(string message) => Operations.Add($"out:{message}");
+
+    public void WriteError(string message) => Operations.Add($"err:{message}");
 }
 
 internal sealed class RecordingUpdateMutexLease(

@@ -44,6 +44,7 @@ function Invoke-CapturedProcess {
     param(
         [Parameter(Mandatory)][string]$FilePath,
         [Parameter(Mandatory)][string]$Arguments,
+        [hashtable]$Environment = @{},
         [int]$TimeoutMilliseconds = 10000
     )
 
@@ -54,6 +55,9 @@ function Invoke-CapturedProcess {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    foreach ($name in $Environment.Keys) {
+        $startInfo.Environment[$name] = [string]$Environment[$name]
+    }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
     try {
@@ -101,7 +105,8 @@ Assert-True (
 $layoutRoot = Join-Path ([IO.Path]::GetTempPath()) "UsageIndicatorForCodex-InstalledLauncherContract-$([Guid]::NewGuid().ToString('N'))"
 $layoutBin = Join-Path $layoutRoot 'bin'
 $layoutApp = Join-Path $layoutRoot 'app'
-New-Item -ItemType Directory -Path $layoutBin, $layoutApp -Force | Out-Null
+$layoutUpdater = Join-Path $layoutRoot 'updater'
+New-Item -ItemType Directory -Path $layoutBin, $layoutApp, $layoutUpdater -Force | Out-Null
 $layoutLauncher = Join-Path $layoutBin $publicExecutableName
 Copy-Item -LiteralPath $publicExecutable -Destination $layoutLauncher
 $probeDirectory = Split-Path -Parent $probeExecutable
@@ -109,6 +114,7 @@ foreach ($sourcePath in Get-ChildItem -LiteralPath $probeDirectory -File) {
     Copy-Item -LiteralPath $sourcePath.FullName -Destination (Join-Path $layoutApp $sourcePath.Name)
 }
 Copy-Item -LiteralPath $probeExecutable -Destination (Join-Path $layoutApp 'UsageIndicatorForCodex.Gui.exe') -Force
+Copy-Item -LiteralPath $probeExecutable -Destination (Join-Path $layoutUpdater 'UsageIndicatorForCodex.UpdateHost.exe') -Force
 
 try {
     $expectedHelpLines = @(
@@ -158,6 +164,53 @@ exit `$nativeExit
     Assert-True ($invalid.Stderr.Contains('Unknown argument: --definitely-invalid')) 'Invalid argument did not write its error to stderr.'
     Assert-True ($invalid.Stderr.Contains($lastHelpLine)) 'Invalid argument stderr did not contain complete help.'
     Assert-True ($invalid.Stdout.Contains($invalidMarker)) 'Windows PowerShell did not reach the post-command marker.'
+
+    $updateStdoutMarker = "__UPDATE_STDOUT_$([Guid]::NewGuid().ToString('N'))__"
+    $updateStderrMarker = "__UPDATE_STDERR_$([Guid]::NewGuid().ToString('N'))__"
+    $updateNextMarker = "__UPDATE_NEXT_$([Guid]::NewGuid().ToString('N'))__"
+    $updateEnvironment = @{
+        USAGE_INDICATOR_LAUNCHER_PROBE_OUTPUT = (Join-Path $layoutRoot 'powershell-update.json')
+        USAGE_INDICATOR_LAUNCHER_PROBE_EXIT_CODE = '37'
+        USAGE_INDICATOR_LAUNCHER_PROBE_STDOUT = $updateStdoutMarker
+        USAGE_INDICATOR_LAUNCHER_PROBE_STDERR = $updateStderrMarker
+    }
+    $updateCommand = @"
+& $quotedLauncher 'update'
+`$nativeExit = `$LASTEXITCODE
+[Console]::Out.WriteLine('$updateNextMarker')
+exit `$nativeExit
+"@
+    $update = Invoke-CapturedProcess `
+        -FilePath $windowsPowerShell `
+        -Arguments "-NoLogo -NoProfile -EncodedCommand $(ConvertTo-EncodedCommand $updateCommand)" `
+        -Environment $updateEnvironment
+    Assert-True ($update.ExitCode -eq 37) "PowerShell update returned $($update.ExitCode), not 37."
+    Assert-True ($update.Stderr.Contains($updateStderrMarker)) 'PowerShell update lost cached-host stderr.'
+    $updateStdoutIndex = $update.Stdout.IndexOf($updateStdoutMarker, [StringComparison]::Ordinal)
+    $updateNextIndex = $update.Stdout.IndexOf($updateNextMarker, [StringComparison]::Ordinal)
+    Assert-True ($updateStdoutIndex -ge 0) 'PowerShell update lost cached-host stdout.'
+    Assert-True ($updateNextIndex -gt $updateStdoutIndex) 'PowerShell advanced before the cached update host completed.'
+
+    $cmdStdoutMarker = "__CMD_UPDATE_STDOUT_$([Guid]::NewGuid().ToString('N'))__"
+    $cmdStderrMarker = "__CMD_UPDATE_STDERR_$([Guid]::NewGuid().ToString('N'))__"
+    $cmdNextMarker = "__CMD_UPDATE_NEXT_$([Guid]::NewGuid().ToString('N'))__"
+    $cmdEnvironment = @{
+        USAGE_INDICATOR_LAUNCHER_PROBE_OUTPUT = (Join-Path $layoutRoot 'cmd-update.json')
+        USAGE_INDICATOR_LAUNCHER_PROBE_EXIT_CODE = '41'
+        USAGE_INDICATOR_LAUNCHER_PROBE_STDOUT = $cmdStdoutMarker
+        USAGE_INDICATOR_LAUNCHER_PROBE_STDERR = $cmdStderrMarker
+    }
+    $cmdArguments = "/d /v:on /s /c `"`"$layoutLauncher`" check-update & set `"nativeExit=!ERRORLEVEL!`" & echo $cmdNextMarker & exit /b !nativeExit!`""
+    $cmdUpdate = Invoke-CapturedProcess `
+        -FilePath $env:ComSpec `
+        -Arguments $cmdArguments `
+        -Environment $cmdEnvironment
+    Assert-True ($cmdUpdate.ExitCode -eq 41) "cmd.exe check-update returned $($cmdUpdate.ExitCode), not 41."
+    Assert-True ($cmdUpdate.Stderr.Contains($cmdStderrMarker)) 'cmd.exe check-update lost cached-host stderr.'
+    $cmdStdoutIndex = $cmdUpdate.Stdout.IndexOf($cmdStdoutMarker, [StringComparison]::Ordinal)
+    $cmdNextIndex = $cmdUpdate.Stdout.IndexOf($cmdNextMarker, [StringComparison]::Ordinal)
+    Assert-True ($cmdStdoutIndex -ge 0) 'cmd.exe check-update lost cached-host stdout.'
+    Assert-True ($cmdNextIndex -gt $cmdStdoutIndex) 'cmd.exe advanced before the cached update host completed.'
 
     $probe = Invoke-CapturedProcess -FilePath $probeExecutable -Arguments "--verify-launcher `"$publicExecutable`"" -TimeoutMilliseconds 30000
     Assert-True ($probe.ExitCode -eq 0) "Launcher probe failed: $($probe.Stdout)$($probe.Stderr)"

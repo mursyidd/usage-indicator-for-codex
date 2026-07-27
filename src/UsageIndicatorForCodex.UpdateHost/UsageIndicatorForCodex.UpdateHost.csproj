@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <AssemblyName>UsageIndicatorForCodex.UpdateHost</AssemblyName>
+    <RootNamespace>UsageIndicatorForCodex.UpdateHost</RootNamespace>
+    <Product>Usage Indicator for Codex</Product>
+    <Description>Runs verified command-line updates outside the replaceable installation payload.</Description>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\UsageIndicatorForCodex.Update.Core\UsageIndicatorForCodex.Update.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(RepositoryUrl)' != ''">
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>UsageIndicatorRepositoryUrl</_Parameter1>
+      <_Parameter2>$(RepositoryUrl)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+  <ItemGroup Condition="'$(IntegrationTestReleaseApiUrl)' != ''
+      and '$(IntegrationTestInstallerStateSubKey)' != ''
+      and '$(IntegrationTestLocalStateRoot)' != ''
+      and '$(IntegrationTestInstanceIdentity)' != ''">
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>UsageIndicatorIntegrationReleaseApiUrl</_Parameter1>
+      <_Parameter2>$(IntegrationTestReleaseApiUrl)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>UsageIndicatorIntegrationInstallerStateSubKey</_Parameter1>
+      <_Parameter2>$(IntegrationTestInstallerStateSubKey)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>UsageIndicatorIntegrationLocalStateRoot</_Parameter1>
+      <_Parameter2>$(IntegrationTestLocalStateRoot)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>UsageIndicatorIntegrationInstanceIdentity</_Parameter1>
+      <_Parameter2>$(IntegrationTestInstanceIdentity)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+  <Target Name="ValidateIntegrationTestMetadata" BeforeTargets="CoreCompile">
+    <Error
+      Condition="('$(IntegrationTestReleaseApiUrl)' != ''
+          or '$(IntegrationTestInstallerStateSubKey)' != ''
+          or '$(IntegrationTestLocalStateRoot)' != ''
+          or '$(IntegrationTestInstanceIdentity)' != '')
+        and ('$(IntegrationTestReleaseApiUrl)' == ''
+          or '$(IntegrationTestInstallerStateSubKey)' == ''
+          or '$(IntegrationTestLocalStateRoot)' == ''
+          or '$(IntegrationTestInstanceIdentity)' == '')"
+      Text="All isolated UpdateHost integration properties must be supplied together." />
+  </Target>
+</Project>

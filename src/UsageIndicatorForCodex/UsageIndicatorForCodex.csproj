@@ -18,6 +18,9 @@
     </AssemblyAttribute>
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\UsageIndicatorForCodex.Update.Core\UsageIndicatorForCodex.Update.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
     <None Include="..\..\LICENSE"
           Link="LICENSE.txt"
           CopyToPublishDirectory="PreserveNewest" />

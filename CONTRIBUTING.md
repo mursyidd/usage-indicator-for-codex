@@ -30,6 +30,8 @@ The repository owner must never be guessed. GitHub Actions derives the URL from
 ```powershell
 $repositoryUrl = 'https://github.com/OWNER/REPOSITORY'
 $publish = '.\artifacts\publish\win-x64'
+$updateHost = '.\artifacts\update-host'
+$launcherProbe = '.\artifacts\launcher-probe'
 $release = '.\artifacts\release'
 
 dotnet restore .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj --runtime win-x64
@@ -44,13 +46,24 @@ dotnet publish .\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj `
 .\scripts\build-launcher.ps1 `
   -OutputPath .\artifacts\usage-indicator.exe
 
+dotnet publish .\tests\UsageIndicatorForCodex.LauncherProbe\UsageIndicatorForCodex.LauncherProbe.csproj `
+  --configuration Release `
+  --runtime win-x64 `
+  --self-contained true `
+  --output $launcherProbe
+
 .\tests\installed-launcher-contract.ps1 `
   -InstalledLauncher .\artifacts\usage-indicator.exe `
-  -LauncherProbe .\tests\UsageIndicatorForCodex.LauncherProbe\bin\Release\net8.0\UsageIndicatorForCodex.LauncherProbe.exe
+  -LauncherProbe (Join-Path $launcherProbe 'UsageIndicatorForCodex.LauncherProbe.exe')
+
+.\scripts\publish-update-host.ps1 `
+  -OutputDirectory $updateHost `
+  -RepositoryUrl $repositoryUrl
 
 .\scripts\build-installer.ps1 `
   -PublishDirectory $publish `
   -InstalledLauncher .\artifacts\usage-indicator.exe `
+  -UpdateHostPath (Join-Path $updateHost 'UsageIndicatorForCodex.UpdateHost.exe') `
   -OutputDirectory $release `
   -RepositoryUrl $repositoryUrl
 
@@ -66,6 +79,9 @@ $installerPath = Join-Path $release $metadata.InstallerAssetName
   -OutputDirectory $release
 
 .\tests\installer-contract.ps1 `
+  -InstallerPath $installerPath
+.\tests\update-host-integration.ps1 `
+  -UpdateHostPath (Join-Path $updateHost 'UsageIndicatorForCodex.UpdateHost.exe') `
   -InstallerPath $installerPath
 .\tests\release-contract.ps1 -AssetDirectory $release
 ```
@@ -119,11 +135,20 @@ release parsing, downloads, checksums, installer execution, named pipes, Task
 Scheduler, PATH ownership, settings migration, and release packaging as
 security-sensitive boundaries.
 
-Updates must remain explicit and interactive. They must verify the exact
-versioned installer against its exact checksum and must not directly replace
-running application files. `update` must acquire the distinct per-user update
-mutex before any network access and hold it through installer launch; all exit
-paths must release it. `check-update` remains lock-free.
+Updates must remain explicit. The cached standalone host must verify the exact
+versioned installer against its exact checksum before graceful process stopping,
+use only the guarded bootstrap-v1 `/CLIUPDATE` contract, validate all three
+installed version sources, and restart only when the companion was previously
+running and the installer returned `0`. Validated `3010` must remain restart
+required without ordinary success or application restart.
+
+Never turn `/CLIUPDATE` into silent first installation, pass `/DIR`, overwrite
+the stable launcher during a CLI update, mutate startup/PATH ownership in that
+mode, force-terminate the application, add scheduled updates, or publish
+UpdateHost as a third release asset. Legacy installations require one
+interactive transition. `update` acquires the distinct per-user update mutex
+before any network access and holds it through validation/restart; all exit paths
+release it. `check-update` remains lock-free.
 
 Startup ownership must remain path-specific. Both exact canonical forms are
 owned: `UsageIndicatorForCodex.Gui.exe --background` and its exact sibling

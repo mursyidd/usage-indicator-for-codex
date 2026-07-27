@@ -10,5 +10,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\UsageIndicatorForCodex\UsageIndicatorForCodex.csproj" />
+    <ProjectReference Include="..\..\src\UsageIndicatorForCodex.Update.Core\UsageIndicatorForCodex.Update.Core.csproj" />
   </ItemGroup>
 </Project>

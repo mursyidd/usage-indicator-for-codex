@@ -2,9 +2,12 @@
 param(
     [Parameter(Mandatory)][string]$PublishDirectory,
     [Parameter(Mandatory)][string]$InstalledLauncher,
+    [Parameter(Mandatory)][string]$UpdateHostPath,
     [Parameter(Mandatory)][string]$OutputDirectory,
     [string]$RepositoryUrl,
-    [string]$IsccPath
+    [string]$IsccPath,
+    [string]$IntegrationTestInstallerStateSubKey,
+    [string]$IntegrationTestAppId
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,17 +19,45 @@ $metadata = Get-UsageIndicatorProductMetadata `
 if ([string]::IsNullOrWhiteSpace($metadata.RepositoryUrl)) {
     throw 'RepositoryUrl is required because this checkout has no usable origin remote.'
 }
+if ([string]::IsNullOrWhiteSpace($IntegrationTestInstallerStateSubKey) -ne
+    [string]::IsNullOrWhiteSpace($IntegrationTestAppId)) {
+    throw 'Both isolated installer integration properties must be supplied together.'
+}
+if (-not [string]::IsNullOrWhiteSpace($IntegrationTestInstallerStateSubKey)) {
+    if (-not $IntegrationTestInstallerStateSubKey.StartsWith(
+        'Software\UsageIndicatorForCodex\IntegrationTests\',
+        [StringComparison]::Ordinal)) {
+        throw 'The integration installer state key is outside the isolated test namespace.'
+    }
+    if ($IntegrationTestAppId -cnotmatch '^\{\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\}$') {
+        throw 'The integration installer AppId must be a double-open-brace uppercase GUID.'
+    }
+}
 
 $publishRoot = (Resolve-Path -LiteralPath $PublishDirectory).Path
 $launcherPath = (Resolve-Path -LiteralPath $InstalledLauncher).Path
+$resolvedUpdateHostPath = (Resolve-Path -LiteralPath $UpdateHostPath).Path
 $repositoryLicensePath = (Resolve-Path -LiteralPath (
     Join-Path $repositoryRoot 'LICENSE')).Path
 if ((Split-Path -Leaf $launcherPath) -cne 'usage-indicator.exe') {
     throw 'Installed launcher must be named usage-indicator.exe.'
 }
+if ((Get-Item -LiteralPath $launcherPath).VersionInfo.ProductVersion.Trim() -cne $metadata.Version) {
+    throw "Installed launcher product version must be $($metadata.Version)."
+}
+if ((Split-Path -Leaf $resolvedUpdateHostPath) -cne 'UsageIndicatorForCodex.UpdateHost.exe') {
+    throw 'UpdateHost must be named UsageIndicatorForCodex.UpdateHost.exe.'
+}
+if ((Get-Item -LiteralPath $resolvedUpdateHostPath).VersionInfo.ProductVersion.Trim() -cne $metadata.Version) {
+    throw "UpdateHost product version must be $($metadata.Version)."
+}
 
 if (-not (Test-Path -LiteralPath (Join-Path $publishRoot 'UsageIndicatorForCodex.Gui.exe') -PathType Leaf)) {
     throw 'Publish directory is missing UsageIndicatorForCodex.Gui.exe.'
+}
+if ((Get-Item -LiteralPath (
+    Join-Path $publishRoot 'UsageIndicatorForCodex.Gui.exe')).VersionInfo.ProductVersion.Trim() -cne $metadata.Version) {
+    throw "GUI product version must be $($metadata.Version)."
 }
 if (-not (Test-Path -LiteralPath (Join-Path $publishRoot 'LICENSE.txt') -PathType Leaf)) {
     throw 'Publish directory is missing LICENSE.txt.'
@@ -62,6 +93,7 @@ $arguments = @(
     '/Qp',
     "/DPublishDirectory=$publishRoot",
     "/DInstalledLauncher=$launcherPath",
+    "/DUpdateHostPath=$resolvedUpdateHostPath",
     "/DProductVersion=$($metadata.Version)",
     "/DInstallerBaseName=$installerBaseName",
     "/DRepositoryUrl=$($metadata.RepositoryUrl)",
@@ -69,6 +101,14 @@ $arguments = @(
     "/O$outputRoot",
     $installerScript
 )
+if (-not [string]::IsNullOrWhiteSpace($IntegrationTestInstallerStateSubKey)) {
+    $arguments = @(
+        $arguments[0..($arguments.Count - 2)]
+        "/DInstallerStateSubKey=$IntegrationTestInstallerStateSubKey"
+        "/DInstallerAppId=$IntegrationTestAppId"
+        $arguments[-1]
+    )
+}
 
 & $IsccPath @arguments
 if ($LASTEXITCODE -ne 0) {

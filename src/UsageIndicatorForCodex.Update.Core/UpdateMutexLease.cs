@@ -1,14 +1,13 @@
 using System.Security.Principal;
-using System.Threading;
 
-namespace UsageIndicatorForCodex.Services;
+namespace UsageIndicatorForCodex.Update;
 
 internal interface IUpdateMutexLease : IDisposable
 {
     bool IsAcquired { get; }
 }
 
-internal sealed class UpdateMutexService : IUpdateMutexLease
+internal sealed class UpdateMutexLease : IUpdateMutexLease
 {
     private readonly ManualResetEventSlim _acquisitionCompleted = new(false);
     private readonly ManualResetEventSlim _releaseRequested = new(false);
@@ -16,7 +15,7 @@ internal sealed class UpdateMutexService : IUpdateMutexLease
     private Exception? _acquisitionFailure;
     private bool _disposed;
 
-    internal UpdateMutexService(string userIdentity)
+    internal UpdateMutexLease(string userIdentity)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(userIdentity);
         MutexName = $"Local\\UsageIndicatorForCodex-Update-{userIdentity}";
@@ -40,11 +39,11 @@ internal sealed class UpdateMutexService : IUpdateMutexLease
 
     public bool IsAcquired { get; private set; }
 
-    internal static UpdateMutexService CreateForCurrentUser()
+    internal static UpdateMutexLease CreateForCurrentUser()
     {
         var userIdentity = WindowsIdentity.GetCurrent().User?.Value
             ?? throw new InvalidOperationException("The Windows user could not be identified.");
-        return new UpdateMutexService(userIdentity);
+        return new UpdateMutexLease(userIdentity);
     }
 
     private void HoldMutex()
