@@ -243,7 +243,7 @@ static void UsesCanonicalAssemblyIdentities()
 
 static void UsesAuthoritativeProductVersion()
 {
-    AssertEqual("0.2.0", ProductInfo.Version);
+    AssertEqual("0.2.1", ProductInfo.Version);
     AssertEqual(
         ProductInfo.Version,
         typeof(UsageIndicatorForCodex.App).Assembly
@@ -673,7 +673,7 @@ static void ChecksForUpdatesWithoutDownloadingAssets()
 
     AssertEqual(true, result.IsAvailable);
     AssertEqual(1, handler.Requests.Count);
-    AssertEqual("Update available: 0.3.0 (current 0.2.0).", result.Message);
+    AssertEqual("Update available: 0.3.0 (current 0.2.1).", result.Message);
 }
 
 static void DownloadsOnlyChecksumVerifiedInstallers()

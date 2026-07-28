@@ -94,7 +94,7 @@ if ($RequirePreservedLocalFiles -or $stagedSuperpowersDeletions.Count -gt 0) {
 
 . $metadataScript
 $metadata = Get-UsageIndicatorProductMetadata -RepositoryRoot $repositoryRoot
-if ($metadata.Version -cne '0.2.0') {
+if ($metadata.Version -cne '0.2.1') {
     throw "Unexpected product version: $($metadata.Version)"
 }
 
@@ -108,7 +108,7 @@ if ([string]::IsNullOrWhiteSpace($releaseNotes)) {
     throw "Canonical release notes file is empty: $releaseNotesPath"
 }
 $expectedReleaseComparison =
-    'https://github.com/mursyidd/usage-indicator-for-codex/compare/v0.1.0...v0.2.0'
+    'https://github.com/mursyidd/usage-indicator-for-codex/compare/v0.2.0...v0.2.1'
 $releaseComparisons = @(
     [regex]::Matches(
         $releaseNotes,
@@ -121,15 +121,9 @@ if ($releaseComparisons.Count -ne 1 -or
 }
 if ([regex]::IsMatch(
     $releaseNotes,
-    '\bpatch\s+release\b',
-    [Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
-    throw 'Canonical release notes must not describe v0.2.0 as a patch release.'
-}
-if ([regex]::IsMatch(
-    $releaseNotes,
     '\breset[\s-]+time(?:stamp)?s?\b|\b(?:local[\s-]+)?time[\s-]*zone\b',
     [Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
-    throw 'Canonical v0.2.0 release notes must not list the already-tagged reset-time timezone correction.'
+    throw "Canonical $($metadata.Tag) release notes must not list the previously released reset-time timezone correction."
 }
 foreach ($portableProperty in @('PortableAssetName', 'PortableChecksumAssetName')) {
     if ($metadata.PSObject.Properties.Name -ccontains $portableProperty) {
