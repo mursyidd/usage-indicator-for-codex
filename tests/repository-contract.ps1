@@ -94,7 +94,7 @@ if ($RequirePreservedLocalFiles -or $stagedSuperpowersDeletions.Count -gt 0) {
 
 . $metadataScript
 $metadata = Get-UsageIndicatorProductMetadata -RepositoryRoot $repositoryRoot
-if ($metadata.Version -cne '0.2.1') {
+if ($metadata.Version -cne '0.2.2') {
     throw "Unexpected product version: $($metadata.Version)"
 }
 
@@ -108,7 +108,7 @@ if ([string]::IsNullOrWhiteSpace($releaseNotes)) {
     throw "Canonical release notes file is empty: $releaseNotesPath"
 }
 $expectedReleaseComparison =
-    'https://github.com/mursyidd/usage-indicator-for-codex/compare/v0.2.0...v0.2.1'
+    'https://github.com/mursyidd/usage-indicator-for-codex/compare/v0.2.1...v0.2.2'
 $releaseComparisons = @(
     [regex]::Matches(
         $releaseNotes,

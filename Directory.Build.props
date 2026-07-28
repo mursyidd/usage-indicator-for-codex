@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <UsageIndicatorProductVersion>0.2.1</UsageIndicatorProductVersion>
+    <UsageIndicatorProductVersion>0.2.2</UsageIndicatorProductVersion>
     <Version>$(UsageIndicatorProductVersion)</Version>
     <VersionPrefix>$(UsageIndicatorProductVersion)</VersionPrefix>
     <AssemblyVersion>$(UsageIndicatorProductVersion).0</AssemblyVersion>
