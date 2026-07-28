@@ -98,11 +98,14 @@ var checks = new (string Name, Action Run)[]
     ("formats reset timestamps in the local timezone without a zone label", FormatsLocalTime),
     ("selects every responsive layout", SelectsResponsiveLayouts),
     ("sizes the full overlay to its rendered content", SizesFullOverlayToContent),
+    ("renders credit expiry only in detailed Full with ordinary Full fallback", RendersCreditExpiryWithFullFallback),
     ("keeps overlay placement deterministic across monitor DPI changes", KeepsOverlayPlacementDeterministicAcrossDpiChanges),
     ("measures layouts against available title-bar space", MeasuresLayoutsAgainstAvailableWidth),
     ("coalesces overlapping refresh requests", CoalescesOverlappingRefreshRequests),
     ("cancels and replaces refresh requests", CancelsAndReplacesRefreshRequests),
     ("parses application commands strictly", ParsesApplicationCommandsStrictly),
+    ("applies credit-expiry commands to stopped and running instances", AppliesCreditExpiryCommands),
+    ("re-renders credit-expiry preference without refreshing usage", ReRendersCreditExpiryPreferenceWithoutRefresh),
     ("keeps update execution outside WPF and parses the private host contract strictly", DefinesStandaloneUpdateBoundary),
     ("selects stable updates and exact release assets", SelectsStableUpdatesAndExactAssets),
     ("checks for updates without downloading assets", ChecksForUpdatesWithoutDownloadingAssets),
@@ -136,6 +139,8 @@ var checks = new (string Name, Action Run)[]
     ("rejects expired-only usage windows", RejectsExpiredWindows),
     ("parses primary and secondary app-server limits", ParsesRateLimitResponse),
     ("accepts an absent optional app-server rate-limit window", AcceptsAbsentOptionalRateLimitWindow),
+    ("extracts the earliest valid future reset-credit expiry", ExtractsEarliestResetCreditExpiry),
+    ("isolates malformed reset-credit details from required usage", IsolatesMalformedResetCreditDetails),
     ("rejects malformed and incompatible app-server responses", RejectsInvalidResponses),
     ("rejects out-of-range rate-limit percentages", RejectsOutOfRangePercentages),
     ("fails closed when the configured CLI is absent", FailsWhenCliIsMissing),
@@ -308,6 +313,7 @@ static void SizesFullOverlayToContent()
             var layout = overlay.Render(
                 IndicatorState.Available,
                 new UsageSnapshot("account", 53, new DateTimeOffset(2026, 7, 29, 0, 23, 0, TimeSpan.Zero)),
+                false,
                 double.PositiveInfinity);
             AssertEqual(OverlayLayout.Full, layout);
 
@@ -350,7 +356,7 @@ static void KeepsOverlayPlacementDeterministicAcrossDpiChanges()
                 new DateTimeOffset(2026, 7, 29, 0, 23, 0, TimeSpan.Zero));
             AssertEqual(
                 OverlayLayout.Full,
-                overlay.Render(IndicatorState.Available, snapshot, double.PositiveInfinity));
+                overlay.Render(IndicatorState.Available, snapshot, false, double.PositiveInfinity));
             var renderedWidthDip = overlay.Width;
 
             var landscape = new NativeMethods.Rect
@@ -434,17 +440,107 @@ static void MeasuresLayoutsAgainstAvailableWidth()
         {
             var overlay = new UsageOverlayWindow();
             var snapshot = new UsageSnapshot("account", 100, new DateTimeOffset(2026, 7, 29, 0, 23, 0, TimeSpan.Zero));
-            AssertEqual(OverlayLayout.Full, overlay.Render(IndicatorState.Available, snapshot, double.PositiveInfinity));
+            AssertEqual(OverlayLayout.Full, overlay.Render(IndicatorState.Available, snapshot, false, double.PositiveInfinity));
             var fullWidth = overlay.Width;
-            var narrow = overlay.Render(IndicatorState.Available, snapshot, fullWidth - 1);
+            var narrow = overlay.Render(IndicatorState.Available, snapshot, false, fullWidth - 1);
             if (narrow != OverlayLayout.Narrow)
             {
                 throw new InvalidOperationException($"Expected Narrow below full width {fullWidth}; received {narrow} at measured width {overlay.Width}.");
             }
             var narrowWidth = overlay.Width;
-            AssertEqual(OverlayLayout.Compact, overlay.Render(IndicatorState.Available, snapshot, narrowWidth - 1));
+            AssertEqual(OverlayLayout.Compact, overlay.Render(IndicatorState.Available, snapshot, false, narrowWidth - 1));
             AssertEqual(true, overlay.Width <= narrowWidth - 1);
-            AssertEqual(OverlayLayout.Hidden, overlay.Render(IndicatorState.Available, snapshot, overlay.Width - 1));
+            AssertEqual(OverlayLayout.Hidden, overlay.Render(IndicatorState.Available, snapshot, false, overlay.Width - 1));
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    thread.Join();
+
+    if (failure is not null)
+    {
+        throw failure;
+    }
+}
+
+static void RendersCreditExpiryWithFullFallback()
+{
+    Exception? failure = null;
+    var thread = new Thread(() =>
+    {
+        try
+        {
+            var overlay = new UsageOverlayWindow();
+            var now = DateTimeOffset.UtcNow;
+            var snapshot = new UsageSnapshot(
+                "account",
+                53,
+                now.AddDays(2),
+                now.AddDays(1));
+
+            AssertEqual(
+                OverlayLayout.Full,
+                overlay.Render(IndicatorState.Available, snapshot, false, double.PositiveInfinity));
+            var ordinaryFullWidth = overlay.Width;
+            AssertEqual(true, overlay.IsResetIconVisible);
+            AssertEqual(false, overlay.IsCreditIconVisible);
+
+            AssertEqual(
+                OverlayLayout.Full,
+                overlay.Render(IndicatorState.Available, snapshot, true, double.PositiveInfinity));
+            var detailedFullWidth = overlay.Width;
+            AssertEqual(true, detailedFullWidth > ordinaryFullWidth);
+            Console.WriteLine($"MEASURE 96-DPI Full widths: ordinary={ordinaryFullWidth:0} DIP; detailed={detailedFullWidth:0} DIP");
+            AssertEqual(true, overlay.IsResetIconVisible);
+            AssertEqual(true, overlay.IsCreditIconVisible);
+            AssertEqual(12d, overlay.ResetIconWidth);
+            AssertEqual(12d, overlay.ResetIconHeight);
+            AssertEqual(1.5d, overlay.ResetIconStrokeThickness);
+            AssertEqual(12d, overlay.CreditIconWidth);
+            AssertEqual(12d, overlay.CreditIconHeight);
+            AssertEqual(1.5d, overlay.CreditIconStrokeThickness);
+            AssertEqual(4d, overlay.TimestampIconGap);
+            AssertEqual(
+                "M 1.75,5.25 C 2.4,2.8 5.05,1.35 7.45,2.15 C 8.55,2.5 9.45,3.25 10.1,4.25 M 10.1,1.65 L 10.1,4.25 L 7.5,4.25 M 10.25,6.75 C 9.6,9.2 6.95,10.65 4.55,9.85 C 3.45,9.5 2.55,8.75 1.9,7.75 M 1.9,10.35 L 1.9,7.75 L 4.5,7.75",
+                UsageOverlayWindow.ResetIconGeometryData);
+            AssertEqual(
+                "M 6,1.25 A 4.75,4.75 0 1 1 5.999,1.25 M 6,3.1 L 6,8.9 M 7.65,4.15 C 7.25,3.55 6.7,3.25 6,3.25 C 5.1,3.25 4.5,3.7 4.5,4.4 C 4.5,5.15 5.15,5.5 6,5.75 C 6.85,6 7.5,6.35 7.5,7.1 C 7.5,7.8 6.9,8.25 6,8.25 C 5.3,8.25 4.7,7.95 4.3,7.35",
+                UsageOverlayWindow.CreditIconGeometryData);
+
+            var betweenFullWidths = (ordinaryFullWidth + detailedFullWidth) / 2;
+            AssertEqual(
+                OverlayLayout.Full,
+                overlay.Render(IndicatorState.Available, snapshot, true, betweenFullWidths));
+            AssertEqual(true, overlay.IsResetIconVisible);
+            AssertEqual(false, overlay.IsCreditIconVisible);
+            AssertEqual(ordinaryFullWidth, overlay.Width);
+
+            AssertEqual(
+                OverlayLayout.Narrow,
+                overlay.Render(IndicatorState.Available, snapshot, true, ordinaryFullWidth - 1));
+            AssertEqual(false, overlay.IsResetIconVisible);
+            AssertEqual(false, overlay.IsCreditIconVisible);
+
+            var withoutExpiry = snapshot with { CreditExpiresAt = null };
+            AssertEqual(
+                OverlayLayout.Full,
+                overlay.Render(IndicatorState.Available, withoutExpiry, true, double.PositiveInfinity));
+            AssertEqual(false, overlay.IsCreditIconVisible);
+
+            AssertEqual(
+                OverlayLayout.Full,
+                overlay.Render(IndicatorState.Loading, null, true, double.PositiveInfinity));
+            AssertEqual(false, overlay.IsResetIconVisible);
+            AssertEqual(false, overlay.IsCreditIconVisible);
+            AssertEqual(
+                OverlayLayout.Full,
+                overlay.Render(IndicatorState.Unavailable, null, true, double.PositiveInfinity));
+            AssertEqual(false, overlay.IsResetIconVisible);
+            AssertEqual(false, overlay.IsCreditIconVisible);
         }
         catch (Exception exception)
         {
@@ -538,6 +634,8 @@ static void ParsesApplicationCommandsStrictly()
           usage-indicator update
           usage-indicator enable-startup
           usage-indicator disable-startup
+          usage-indicator enable-credit-expiry
+          usage-indicator disable-credit-expiry
           usage-indicator help
 
         Keyboard shortcut:
@@ -556,6 +654,8 @@ static void ParsesApplicationCommandsStrictly()
     AssertEqual(CommandLineAction.Update, CommandLineOptions.Parse(["update"]).Action);
     AssertEqual(CommandLineAction.EnableStartup, CommandLineOptions.Parse(["enable-startup"]).Action);
     AssertEqual(CommandLineAction.DisableStartup, CommandLineOptions.Parse(["disable-startup"]).Action);
+    AssertEqual(CommandLineAction.EnableCreditExpiry, CommandLineOptions.Parse(["enable-credit-expiry"]).Action);
+    AssertEqual(CommandLineAction.DisableCreditExpiry, CommandLineOptions.Parse(["disable-credit-expiry"]).Action);
     AssertEqual(CommandLineAction.Help, CommandLineOptions.Parse(["help"]).Action);
     AssertEqual(CommandLineAction.Invalid, CommandLineOptions.Parse(["--exit"]).Action);
     AssertEqual(CommandLineAction.Invalid, CommandLineOptions.Parse(["--install"]).Action);
@@ -572,6 +672,8 @@ static void ParsesApplicationCommandsStrictly()
     AssertEqual(2, CommandLineOptions.Parse(["--unknown"]).ExitCode);
     AssertEqual(true, CommandLineOptions.Parse(["--unknown"]).Message.Contains(CommandLineOptions.Usage, StringComparison.Ordinal));
     AssertEqual(true, CommandLineOptions.Usage.Contains("usage-indicator update", StringComparison.Ordinal));
+    AssertEqual("Credit expiry enabled.", App.GetCreditExpirySuccessMessage(true));
+    AssertEqual("Credit expiry disabled.", App.GetCreditExpirySuccessMessage(false));
     AssertEqual(expectedUsage, CommandLineOptions.Usage);
     AssertEqual(false, CommandLineOptions.Usage.Contains("UsageIndicatorForCodex.exe", StringComparison.Ordinal));
     AssertEqual(false, CommandLineOptions.Usage.Contains("Portable", StringComparison.Ordinal));
@@ -651,6 +753,124 @@ static void DefinesStandaloneUpdateBoundary()
         "--bootstrap-version",
         (ProductConstants.BootstrapProtocolVersion + 1).ToString()
     ]));
+    AssertThrows<ArgumentException>(() => UpdateHostArguments.Parse(["enable-credit-expiry"]));
+}
+
+static void AppliesCreditExpiryCommands()
+{
+    WithTemporaryDirectory("UsageIndicatorForCodex-Credit-Command", directory =>
+    {
+        var stoppedIdentity = $"S-1-5-21-{Guid.NewGuid():N}";
+        using var stopped = new SingleInstanceService(stoppedIdentity);
+        var stoppedStore = new UserSettingsStore(Path.Combine(directory, "stopped", "settings.json"));
+        var stoppedResult = App.ApplyCreditExpirySettingAsync(true, stoppedStore, stopped)
+            .GetAwaiter()
+            .GetResult();
+        AssertEqual(true, stoppedResult);
+        AssertEqual(true, stoppedStore.Load().CreditExpiryEnabled);
+
+        var runningIdentity = $"S-1-5-21-{Guid.NewGuid():N}";
+        using var primary = new SingleInstanceService(runningIdentity);
+        var runningStore = new UserSettingsStore(Path.Combine(directory, "running", "settings.json"));
+        primary.Start((command, _) =>
+        {
+            var enabled = command == InstanceCommand.EnableCreditExpiry;
+            runningStore.Save(runningStore.Load() with { CreditExpiryEnabled = enabled });
+            return Task.FromResult(
+                command is InstanceCommand.EnableCreditExpiry or InstanceCommand.DisableCreditExpiry);
+        });
+
+        SingleInstanceService? secondary = null;
+        var secondaryThread = new Thread(() => secondary = new SingleInstanceService(runningIdentity));
+        secondaryThread.Start();
+        secondaryThread.Join();
+        using var runningClient = secondary
+            ?? throw new InvalidOperationException("The running-instance client was not created.");
+        var callerStorePath = Path.Combine(directory, "caller", "settings.json");
+        var callerStore = new UserSettingsStore(callerStorePath);
+
+        AssertEqual(
+            true,
+            App.ApplyCreditExpirySettingAsync(true, callerStore, runningClient).GetAwaiter().GetResult());
+        AssertEqual(true, runningStore.Load().CreditExpiryEnabled);
+        AssertEqual(false, File.Exists(callerStorePath));
+
+        AssertEqual(
+            true,
+            App.ApplyCreditExpirySettingAsync(false, callerStore, runningClient).GetAwaiter().GetResult());
+        AssertEqual(false, runningStore.Load().CreditExpiryEnabled);
+
+        var failureIdentity = $"S-1-5-21-{Guid.NewGuid():N}";
+        using var failingPrimary = new SingleInstanceService(failureIdentity);
+        failingPrimary.Start((_, _) => Task.FromResult(false));
+        SingleInstanceService? failingSecondary = null;
+        var failureThread = new Thread(() => failingSecondary = new SingleInstanceService(failureIdentity));
+        failureThread.Start();
+        failureThread.Join();
+        using var failingClient = failingSecondary
+            ?? throw new InvalidOperationException("The failing client was not created.");
+        AssertEqual(
+            false,
+            App.ApplyCreditExpirySettingAsync(true, callerStore, failingClient).GetAwaiter().GetResult());
+    });
+}
+
+static void ReRendersCreditExpiryPreferenceWithoutRefresh()
+{
+    Exception? failure = null;
+    var thread = new Thread(() =>
+    {
+        try
+        {
+            WithTemporarySettingsFile(path =>
+            {
+                var provider = new CountingUsageProvider();
+                using (var coordinator = new IndicatorCoordinator(
+                           new CodexWindowTracker(),
+                           provider,
+                           new UsageOverlayWindow(),
+                           new UserSettingsStore(path)))
+                {
+                    coordinator.SetCreditExpiryEnabled(true);
+                    coordinator.SetCreditExpiryEnabled(true);
+                    AssertEqual(true, new UserSettingsStore(path).Load().CreditExpiryEnabled);
+                    AssertEqual(0, provider.ReadCount);
+
+                    coordinator.SetCreditExpiryEnabled(false);
+                    AssertEqual(false, new UserSettingsStore(path).Load().CreditExpiryEnabled);
+                    AssertEqual(0, provider.ReadCount);
+                }
+
+                var disabledStore = new UserSettingsStore(path);
+                disabledStore.Save(UserSettings.Default with { Enabled = false });
+                var disabledOverlay = new UsageOverlayWindow();
+                var disabledHandle = new System.Windows.Interop.WindowInteropHelper(disabledOverlay).EnsureHandle();
+                using var disabledCoordinator = new IndicatorCoordinator(
+                    new CodexWindowTracker(),
+                    provider,
+                    disabledOverlay,
+                    disabledStore);
+                typeof(IndicatorCoordinator)
+                    .GetField("_activeCodexWindow", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(disabledCoordinator, disabledHandle);
+
+                disabledCoordinator.SetCreditExpiryEnabled(true);
+                AssertEqual(false, disabledOverlay.IsVisible);
+                AssertEqual(0, provider.ReadCount);
+            });
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    thread.Join();
+    if (failure is not null)
+    {
+        throw failure;
+    }
 }
 
 static void ChecksForUpdatesWithoutDownloadingAssets()
@@ -1435,6 +1655,89 @@ static void AcceptsAbsentOptionalRateLimitWindow()
     AssertEqual(65, snapshot.RemainingPercent);
 }
 
+static void ExtractsEarliestResetCreditExpiry()
+{
+    var now = DateTimeOffset.FromUnixTimeSeconds(2_000_000_000);
+    var expected = now.AddMinutes(20);
+    using var document = JsonDocument.Parse($$"""
+    {
+      "rateLimitResetCredits": {
+        "availableCount": 6,
+        "credits": [
+          { "status": "available", "expiresAt": {{now.AddHours(2).ToUnixTimeSeconds()}} },
+          { "status": "used", "expiresAt": {{now.AddMinutes(1).ToUnixTimeSeconds()}} },
+          { "status": "available", "expiresAt": {{now.AddMinutes(-1).ToUnixTimeSeconds()}} },
+          { "status": "available", "expiresAt": {{expected.ToUnixTimeSeconds()}} },
+          { "status": "available", "expiresAt": 999999999999999999 },
+          { "status": "available", "expiresAt": "soon" }
+        ]
+      }
+    }
+    """);
+
+    var parsed = AppServerResponses.ExtractEarliestResetCreditExpiry(document.RootElement, now);
+    AssertEqual(true, parsed.HasValue);
+    AssertEqual(expected, parsed.GetValueOrDefault());
+
+    foreach (var json in new[]
+    {
+        """{}""",
+        """{ "rateLimitResetCredits": null }""",
+        """{ "rateLimitResetCredits": [] }""",
+        """{ "rateLimitResetCredits": { "credits": [] } }""",
+        """{ "rateLimitResetCredits": { "availableCount": "1", "credits": [] } }""",
+        """{ "rateLimitResetCredits": { "availableCount": 1, "credits": null } }""",
+        """{ "rateLimitResetCredits": { "availableCount": 1, "credits": [] } }""",
+        """{ "rateLimitResetCredits": { "availableCount": 0, "credits": [{ "status": "available", "expiresAt": 2000001000 }] } }""",
+        """{ "rateLimitResetCredits": { "availableCount": 1, "credits": [{ "status": "used", "expiresAt": 2000001000 }] } }"""
+    })
+    {
+        using var missing = JsonDocument.Parse(json);
+        AssertEqual(false, AppServerResponses.ExtractEarliestResetCreditExpiry(missing.RootElement, now).HasValue);
+    }
+}
+
+static void IsolatesMalformedResetCreditDetails()
+{
+    var now = DateTimeOffset.FromUnixTimeSeconds(2_000_000_000);
+    using var document = JsonDocument.Parse("""
+    {
+      "rateLimits": {
+        "primary": { "usedPercent": 35, "resetsAt": 2000001000 }
+      },
+      "rateLimitResetCredits": {
+        "availableCount": 3,
+        "credits": [
+          null,
+          [],
+          { "status": 42, "expiresAt": 2000001000 },
+          { "status": "available" }
+        ]
+      }
+    }
+    """);
+
+    var windows = AppServerResponses.ExtractRateLimitWindows(document.RootElement);
+    var expiry = AppServerResponses.ExtractEarliestResetCreditExpiry(document.RootElement, now);
+    var snapshot = IndicatorPresentation.SelectMostRestrictive("account", windows, expiry);
+
+    AssertEqual(65, snapshot.RemainingPercent);
+    AssertEqual(false, snapshot.CreditExpiresAt.HasValue);
+
+    using var malformedRequired = JsonDocument.Parse("""
+    {
+      "rateLimits": {
+        "primary": { "usedPercent": "thirty-five", "resetsAt": 2000001000 }
+      },
+      "rateLimitResetCredits": {
+        "availableCount": 1,
+        "credits": [{ "status": "available", "expiresAt": 2000001000 }]
+      }
+    }
+    """);
+    AssertThrows<InvalidOperationException>(() => AppServerResponses.ExtractRateLimitWindows(malformedRequired.RootElement));
+}
+
 static void RejectsInvalidResponses()
 {
     using var malformedRateLimits = JsonDocument.Parse("""
@@ -1616,6 +1919,8 @@ static void RunsSpacedCmdLauncher()
 
         AssertEqual(18, snapshot.RemainingPercent);
         AssertEqual(DateTimeOffset.FromUnixTimeSeconds(2_000_000_000), snapshot.ResetsAt);
+        AssertEqual(true, snapshot.CreditExpiresAt.HasValue);
+        AssertEqual(DateTimeOffset.FromUnixTimeSeconds(1_999_999_000), snapshot.CreditExpiresAt.GetValueOrDefault());
         AssertEqual(false, string.IsNullOrWhiteSpace(snapshot.AccountFingerprint));
     });
 }
@@ -1726,7 +2031,24 @@ static async Task RunFakeAppServerAsync(bool rpcError, bool hangAfterInitialize,
             "initialize" => new { jsonrpc = "2.0", id, result = new { } },
             "account/read" when rpcError => new { jsonrpc = "2.0", id, error = new { code = -1, message = "synthetic failure" } },
             "account/read" => new { jsonrpc = "2.0", id, result = new { account = new { type = "chatgpt", email = "synthetic@example.invalid", planType = "plus" } } },
-            "account/rateLimits/read" => new { jsonrpc = "2.0", id, result = new { rateLimits = new { primary = new { usedPercent = 35, resetsAt = 2_000_000_000 }, secondary = new { usedPercent = 82, resetsAt = 2_000_000_000 } } } },
+            "account/rateLimits/read" => new
+            {
+                jsonrpc = "2.0",
+                id,
+                result = new
+                {
+                    rateLimits = new
+                    {
+                        primary = new { usedPercent = 35, resetsAt = 2_000_000_000 },
+                        secondary = new { usedPercent = 82, resetsAt = 2_000_000_000 }
+                    },
+                    rateLimitResetCredits = new
+                    {
+                        availableCount = 1,
+                        credits = new[] { new { status = "available", expiresAt = 1_999_999_000 } }
+                    }
+                }
+            },
             _ => new { jsonrpc = "2.0", id, error = new { code = -1, message = "unexpected method" } }
         };
 
@@ -1744,7 +2066,12 @@ static void LoadsValidUserSettings()
     WithTemporarySettingsFile(path =>
     {
         File.WriteAllText(path, """{"Enabled":false,"HorizontalOffset":-500,"VerticalOffset":500}""");
-        AssertEqual(new UserSettings(false, -500, 500), new UserSettingsStore(path).Load());
+        var store = new UserSettingsStore(path);
+        AssertEqual(new UserSettings(false, -500, 500, false), store.Load());
+
+        File.WriteAllText(path, """{"Enabled":true,"HorizontalOffset":12,"VerticalOffset":-4,"CreditExpiryEnabled":true}""");
+        AssertEqual(new UserSettings(true, 12, -4, true), store.Load());
+        AssertEqual(false, UserSettings.Default.CreditExpiryEnabled);
     });
 }
 
@@ -1753,12 +2080,14 @@ static void FormatsCompleteApplicationStatus()
     var running = new ApplicationStatusSnapshot(
         true,
         false,
+        true,
         StartupTaskState.Enabled);
     AssertEqual(
         string.Join(
             Environment.NewLine,
             "running: true",
             "indicator-enabled: false",
+            "credit-expiry: enabled",
             "startup: enabled"),
         running.Format());
     AssertEqual(0, running.ExitCode);
@@ -1766,12 +2095,14 @@ static void FormatsCompleteApplicationStatus()
     var stopped = new ApplicationStatusSnapshot(
         false,
         true,
+        false,
         StartupTaskState.Unrecognized);
     AssertEqual(
         string.Join(
             Environment.NewLine,
             "running: false",
             "indicator-enabled: true",
+            "credit-expiry: disabled",
             "startup: unrecognized"),
         stopped.Format());
     AssertEqual(0, stopped.ExitCode);
@@ -1792,14 +2123,20 @@ static void InspectsStatusSettingsStrictly()
             legacyPath,
             """{"Enabled":false,"HorizontalOffset":0,"VerticalOffset":6}""");
         AssertEqual(false, store.InspectEnabled());
+        AssertEqual(new UserSettings(false, 0, 6, false), store.Inspect());
         AssertEqual(false, File.Exists(canonicalPath));
 
         Directory.CreateDirectory(Path.GetDirectoryName(canonicalPath)!);
-        File.WriteAllText(canonicalPath, """{"Enabled":true,"HorizontalOffset":0,"VerticalOffset":6}""");
+        File.WriteAllText(canonicalPath, """{"Enabled":true,"HorizontalOffset":0,"VerticalOffset":6,"CreditExpiryEnabled":true}""");
         AssertEqual(true, store.InspectEnabled());
+        AssertEqual(new UserSettings(true, 0, 6, true), store.Inspect());
 
         File.WriteAllText(canonicalPath, """{"Enabled":"invalid","HorizontalOffset":0,"VerticalOffset":6}""");
         AssertThrows<InvalidDataException>(() => store.InspectEnabled());
+
+        File.WriteAllText(canonicalPath, """{"Enabled":true,"HorizontalOffset":0,"VerticalOffset":6,"CreditExpiryEnabled":"yes"}""");
+        AssertEqual(UserSettings.Default, store.Load());
+        AssertThrows<InvalidDataException>(() => store.Inspect());
 
         File.Delete(canonicalPath);
         Directory.CreateDirectory(canonicalPath);
@@ -1817,7 +2154,9 @@ static void FallsBackForMalformedUserSettings()
             """{"Enabled":false,"HorizontalOffset":0,"VerticalOffset":""}""",
             """{"HorizontalOffset":12}""",
             """{"Enabled":null,"HorizontalOffset":0,"VerticalOffset":6}""",
-            """{"Enabled":false,"HorizontalOffset":null,"VerticalOffset":6}"""
+            """{"Enabled":false,"HorizontalOffset":null,"VerticalOffset":6}""",
+            """{"Enabled":false,"HorizontalOffset":0,"VerticalOffset":6,"CreditExpiryEnabled":1}""",
+            """{"Enabled":false,"HorizontalOffset":0,"VerticalOffset":6,"CreditExpiryEnabled":null}"""
         })
         {
             File.WriteAllText(path, json);
@@ -1860,10 +2199,10 @@ static void MigratesLegacySettingsSafely()
         var canonicalPath = Path.Combine(directory, "UsageIndicatorForCodex", "settings.json");
         var legacyPath = Path.Combine(directory, "CodexUsageIndicator", "settings.json");
         Directory.CreateDirectory(Path.GetDirectoryName(legacyPath)!);
-        File.WriteAllText(legacyPath, """{"Enabled":false,"HorizontalOffset":12,"VerticalOffset":-4}""");
+        File.WriteAllText(legacyPath, """{"Enabled":false,"HorizontalOffset":12,"VerticalOffset":-4,"CreditExpiryEnabled":true}""");
 
         var migrated = new UserSettingsStore(canonicalPath, legacyPath).Load();
-        AssertEqual(new UserSettings(false, 12, -4), migrated);
+        AssertEqual(new UserSettings(false, 12, -4, true), migrated);
         AssertEqual(true, File.Exists(canonicalPath));
         AssertEqual(true, File.Exists(legacyPath));
         AssertEqual(migrated, new UserSettingsStore(canonicalPath).Load());
@@ -1911,10 +2250,12 @@ static void SavesSettingsAtomically()
     {
         var path = Path.Combine(directory, "UsageIndicatorForCodex", "settings.json");
         var store = new UserSettingsStore(path);
-        store.Save(new UserSettings(false, 1, 2));
-        store.Save(new UserSettings(true, 3, 4));
+        store.Save(new UserSettings(false, 1, 2, true));
+        store.Save(new UserSettings(true, 3, 4, false));
 
-        AssertEqual(new UserSettings(true, 3, 4), store.Load());
+        AssertEqual(new UserSettings(true, 3, 4, false), store.Load());
+        var json = File.ReadAllText(path);
+        AssertEqual(true, json.Contains("\"CreditExpiryEnabled\": false", StringComparison.Ordinal));
         AssertEqual(0, Directory.GetFiles(Path.GetDirectoryName(path)!, "*.tmp").Length);
     });
 }
@@ -2642,6 +2983,21 @@ internal sealed class RecordingHttpMessageHandler(
     {
         Requests.Add(request);
         return Task.FromResult(responseFactory(request));
+    }
+}
+
+internal sealed class CountingUsageProvider : IUsageProvider
+{
+    internal int ReadCount { get; private set; }
+
+    public Task<UsageSnapshot> ReadAsync(CancellationToken cancellationToken)
+    {
+        ReadCount++;
+        return Task.FromResult(new UsageSnapshot(
+            "test-account",
+            50,
+            DateTimeOffset.UtcNow.AddHours(1),
+            DateTimeOffset.UtcNow.AddMinutes(30)));
     }
 }
 

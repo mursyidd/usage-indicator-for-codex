@@ -69,11 +69,19 @@ $requiredFragments = @(
     'ExpandConstant(''{app}\bin\usage-indicator.exe'')',
     'ExecAndCaptureOutput(',
     'ewWaitUntilTerminated',
-    'GetArrayLength(Output.StdOut) <> 3',
+    'LineCount := GetArrayLength(Output.StdOut)',
+    '(LineCount <> 3) and',
+    '(LineCount <> 4)',
     'GetArrayLength(Output.StdErr) <> 0',
     'Output.Error',
     'IsBooleanStatusRecord(Output.StdOut[0], ''running'')',
     'IsBooleanStatusRecord(Output.StdOut[1], ''indicator-enabled'')',
+    'StartupIndex := 2',
+    'if LineCount = 4 then',
+    '''credit-expiry: enabled''',
+    '''credit-expiry: disabled''',
+    'StartupIndex := 3',
+    'Output.StdOut[StartupIndex]',
     'Value = Name + '': true''',
     'Value = Name + '': false''',
     '''startup: enabled''',
@@ -283,37 +291,70 @@ function Read-StartupStatusModel {
     )
 
     if (-not $LaunchSucceeded -or $ExitCode -ne 0 -or $CaptureError -or
-        $StdErr.Count -ne 0 -or $StdOut.Count -ne 3) {
+        $StdErr.Count -ne 0 -or $StdOut.Count -notin @(3, 4)) {
         return $null
     }
     if ($StdOut[0] -cnotin @('running: true', 'running: false') -or
-        $StdOut[1] -cnotin @('indicator-enabled: true', 'indicator-enabled: false') -or
-        $StdOut[2] -cnotin @('startup: enabled', 'startup: disabled', 'startup: unrecognized')) {
+        $StdOut[1] -cnotin @('indicator-enabled: true', 'indicator-enabled: false')) {
         return $null
     }
 
-    return $StdOut[2].Substring('startup: '.Length)
+    $startupIndex = 2
+    if ($StdOut.Count -eq 4) {
+        if ($StdOut[2] -cnotin @('credit-expiry: enabled', 'credit-expiry: disabled')) {
+            return $null
+        }
+        $startupIndex = 3
+    }
+    if ($StdOut[$startupIndex] -cnotin @(
+            'startup: enabled',
+            'startup: disabled',
+            'startup: unrecognized')) {
+        return $null
+    }
+
+    return $StdOut[$startupIndex].Substring('startup: '.Length)
 }
 
-$validStatus = @('running: false', 'indicator-enabled: true', 'startup: enabled')
-if ((Read-StartupStatusModel -StdOut $validStatus) -cne 'enabled') {
-    throw 'Installer status model rejected the exact complete status contract.'
+$validLegacyStatus = @(
+    'running: true',
+    'indicator-enabled: false',
+    'startup: enabled')
+if ((Read-StartupStatusModel -StdOut $validLegacyStatus) -cne 'enabled') {
+    throw 'Installer status model rejected the exact legacy three-line status contract.'
+}
+
+$validCurrentStatus = @(
+    'running: false',
+    'indicator-enabled: true',
+    'credit-expiry: enabled',
+    'startup: disabled')
+if ((Read-StartupStatusModel -StdOut $validCurrentStatus) -cne 'disabled') {
+    throw 'Installer status model rejected the exact current four-line status contract.'
 }
 foreach ($invalidStatus in @(
     @(,'running: false'),
+    @('running: false', 'indicator-enabled: true'),
     @('running: false', 'indicator-enabled: true', 'startup: enabled', 'extra'),
+    @('running: false', 'indicator-enabled: true', 'credit-expiry: disabled', 'startup: enabled', 'extra'),
     @('Running: false', 'indicator-enabled: true', 'startup: enabled'),
     @('running: false', 'indicator-enabled: yes', 'startup: enabled'),
-    @('running: false', 'indicator-enabled: true', 'startup: unknown')
+    @('running: false', 'indicator-enabled: true', 'startup: unknown'),
+    @('running: false', 'indicator-enabled: true', 'credit-expiry: disabled'),
+    @('Running: false', 'indicator-enabled: true', 'credit-expiry: disabled', 'startup: enabled'),
+    @('running: false', 'indicator-enabled: yes', 'credit-expiry: disabled', 'startup: enabled'),
+    @('running: false', 'indicator-enabled: true', 'credit-expiry: invalid', 'startup: enabled'),
+    @('running: false', 'indicator-enabled: true', 'credit-expiry: disabled', 'startup: unknown'),
+    @('running: false', 'indicator-enabled: true', 'startup: enabled', 'credit-expiry: disabled')
 )) {
     if ($null -ne (Read-StartupStatusModel -StdOut $invalidStatus)) {
         throw "Installer status model accepted malformed output: $($invalidStatus -join ' | ')"
     }
 }
-if ($null -ne (Read-StartupStatusModel -StdOut $validStatus -StdErr @('error')) -or
-    $null -ne (Read-StartupStatusModel -StdOut $validStatus -ExitCode 1) -or
-    $null -ne (Read-StartupStatusModel -StdOut $validStatus -LaunchSucceeded $false) -or
-    $null -ne (Read-StartupStatusModel -StdOut $validStatus -CaptureError $true)) {
+if ($null -ne (Read-StartupStatusModel -StdOut $validCurrentStatus -StdErr @('error')) -or
+    $null -ne (Read-StartupStatusModel -StdOut $validCurrentStatus -ExitCode 1) -or
+    $null -ne (Read-StartupStatusModel -StdOut $validCurrentStatus -LaunchSucceeded $false) -or
+    $null -ne (Read-StartupStatusModel -StdOut $validCurrentStatus -CaptureError $true)) {
     throw 'Installer status model accepted a failed launch, exit, stderr, or capture result.'
 }
 
@@ -338,8 +379,15 @@ if ((Get-StartupMutationModel $false $false $false $true) -cne 'disable-startup'
 if ((Read-StartupStatusModel -StdOut @(
         'running: false',
         'indicator-enabled: true',
+        'credit-expiry: disabled',
         'startup: unrecognized')) -cne 'unrecognized') {
     throw 'Installer status model must retain an exact unrecognized collision state.'
+}
+if ((Read-StartupStatusModel -StdOut @(
+        'running: false',
+        'indicator-enabled: true',
+        'startup: unrecognized')) -cne 'unrecognized') {
+    throw 'Legacy installer status model must retain an exact unrecognized collision state.'
 }
 if ((Get-StartupMutationModel $false $false $true $true $true) -cne 'none' -or
     (Get-StartupMutationModel $false $false $false $true $true) -cne 'none') {

@@ -15,6 +15,8 @@ internal enum CommandLineAction
     Update,
     EnableStartup,
     DisableStartup,
+    EnableCreditExpiry,
+    DisableCreditExpiry,
     Help,
     Invalid
 }
@@ -33,6 +35,8 @@ internal sealed record CommandLineOptions(CommandLineAction Action, int ExitCode
           usage-indicator update
           usage-indicator enable-startup
           usage-indicator disable-startup
+          usage-indicator enable-credit-expiry
+          usage-indicator disable-credit-expiry
           usage-indicator help
 
         Keyboard shortcut:
@@ -63,6 +67,8 @@ internal sealed record CommandLineOptions(CommandLineAction Action, int ExitCode
             "update" => new CommandLineOptions(CommandLineAction.Update, 0, string.Empty),
             "enable-startup" => new CommandLineOptions(CommandLineAction.EnableStartup, 0, string.Empty),
             "disable-startup" => new CommandLineOptions(CommandLineAction.DisableStartup, 0, string.Empty),
+            "enable-credit-expiry" => new CommandLineOptions(CommandLineAction.EnableCreditExpiry, 0, string.Empty),
+            "disable-credit-expiry" => new CommandLineOptions(CommandLineAction.DisableCreditExpiry, 0, string.Empty),
             "help" => new CommandLineOptions(CommandLineAction.Help, 0, Usage),
             _ => Invalid($"Unknown argument: {arguments[0]}")
         };

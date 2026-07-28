@@ -298,7 +298,9 @@ function TryInspectExistingStartup(
   var PreferenceKnown, StartupEnabled, CollisionDetected: Boolean): Boolean;
 var
   CliPath: string;
+  LineCount: Integer;
   ResultCode: Integer;
+  StartupIndex: Integer;
   Output: TExecOutput;
   LaunchSucceeded: Boolean;
 begin
@@ -324,10 +326,12 @@ begin
     Exit;
   end;
 
+  LineCount := GetArrayLength(Output.StdOut);
   if (not LaunchSucceeded) or
      (ResultCode <> 0) or
      Output.Error or
-     (GetArrayLength(Output.StdOut) <> 3) or
+     ((LineCount <> 3) and
+      (LineCount <> 4)) or
      (GetArrayLength(Output.StdErr) <> 0) then
   begin
     Log('Existing startup status inspection returned an unusable result.');
@@ -335,22 +339,39 @@ begin
   end;
 
   if (not IsBooleanStatusRecord(Output.StdOut[0], 'running')) or
-     (not IsBooleanStatusRecord(Output.StdOut[1], 'indicator-enabled')) or
-     ((Output.StdOut[2] <> 'startup: enabled') and
-      (Output.StdOut[2] <> 'startup: disabled') and
-      (Output.StdOut[2] <> 'startup: unrecognized')) then
+     (not IsBooleanStatusRecord(Output.StdOut[1], 'indicator-enabled')) then
+  begin
+    Log('Existing startup status inspection returned malformed records.');
+    Exit;
+  end;
+
+  StartupIndex := 2;
+  if LineCount = 4 then
+  begin
+    if (Output.StdOut[2] <> 'credit-expiry: enabled') and
+       (Output.StdOut[2] <> 'credit-expiry: disabled') then
+    begin
+      Log('Existing startup status inspection returned malformed records.');
+      Exit;
+    end;
+    StartupIndex := 3;
+  end;
+
+  if (Output.StdOut[StartupIndex] <> 'startup: enabled') and
+     (Output.StdOut[StartupIndex] <> 'startup: disabled') and
+     (Output.StdOut[StartupIndex] <> 'startup: unrecognized') then
   begin
     Log('Existing startup status inspection returned malformed records.');
     Exit;
   end;
 
   Result := True;
-  if Output.StdOut[2] = 'startup: enabled' then
+  if Output.StdOut[StartupIndex] = 'startup: enabled' then
   begin
     PreferenceKnown := True;
     StartupEnabled := True;
   end
-  else if Output.StdOut[2] = 'startup: disabled' then
+  else if Output.StdOut[StartupIndex] = 'startup: disabled' then
   begin
     PreferenceKnown := True;
     StartupEnabled := False;

@@ -64,6 +64,27 @@ internal sealed class IndicatorCoordinator : IDisposable
 
     public bool IsEnabled => _settings.Enabled;
 
+    public void SetCreditExpiryEnabled(bool enabled)
+    {
+        if (_disposed)
+        {
+            throw new ObjectDisposedException(nameof(IndicatorCoordinator));
+        }
+
+        if (_settings.CreditExpiryEnabled == enabled)
+        {
+            return;
+        }
+
+        var updated = _settings with { CreditExpiryEnabled = enabled };
+        _settingsStore.Save(updated);
+        _settings = updated;
+        if (_settings.Enabled)
+        {
+            UpdatePlacement();
+        }
+    }
+
     public Task<bool> RevalidateAsync()
     {
         if (_disposed)
@@ -252,7 +273,11 @@ internal sealed class IndicatorCoordinator : IDisposable
             return;
         }
 
-        var layout = _overlay.Render(state, snapshot, IndicatorPresentation.GetAvailableOverlayWidth(rect.Width));
+        var layout = _overlay.Render(
+            state,
+            snapshot,
+            _settings.CreditExpiryEnabled,
+            IndicatorPresentation.GetAvailableOverlayWidth(rect.Width));
         if (layout == OverlayLayout.Hidden)
         {
             _overlay.Hide();

@@ -53,6 +53,60 @@ public static class AppServerResponses
         return windows;
     }
 
+    internal static DateTimeOffset? ExtractEarliestResetCreditExpiry(
+        JsonElement rateLimitReadResult,
+        DateTimeOffset now)
+    {
+        if (!rateLimitReadResult.TryGetProperty("rateLimitResetCredits", out var resetCredits) ||
+            resetCredits.ValueKind != JsonValueKind.Object ||
+            !resetCredits.TryGetProperty("availableCount", out var availableCount) ||
+            availableCount.ValueKind != JsonValueKind.Number ||
+            !availableCount.TryGetInt32(out var count) ||
+            count <= 0 ||
+            !resetCredits.TryGetProperty("credits", out var credits) ||
+            credits.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        DateTimeOffset? earliest = null;
+        foreach (var row in credits.EnumerateArray())
+        {
+            if (row.ValueKind != JsonValueKind.Object ||
+                !row.TryGetProperty("status", out var status) ||
+                status.ValueKind != JsonValueKind.String ||
+                !string.Equals(status.GetString(), "available", StringComparison.Ordinal) ||
+                !row.TryGetProperty("expiresAt", out var expiresAt) ||
+                expiresAt.ValueKind != JsonValueKind.Number ||
+                !expiresAt.TryGetInt64(out var unixSeconds))
+            {
+                continue;
+            }
+
+            DateTimeOffset candidate;
+            try
+            {
+                candidate = DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                continue;
+            }
+
+            if (candidate <= now)
+            {
+                continue;
+            }
+
+            if (earliest is null || candidate < earliest)
+            {
+                earliest = candidate;
+            }
+        }
+
+        return earliest;
+    }
+
     private static void AddWindow(JsonElement snapshot, string propertyName, ICollection<RateLimitWindow> windows)
     {
         if (!snapshot.TryGetProperty(propertyName, out var window))

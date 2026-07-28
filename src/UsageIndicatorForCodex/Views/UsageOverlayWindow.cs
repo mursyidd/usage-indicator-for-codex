@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Interop;
+using System.Windows.Shapes;
 using UsageIndicatorForCodex.Core;
 using UsageIndicatorForCodex.Interop;
 using UsageIndicatorForCodex.Services;
@@ -14,15 +15,28 @@ internal readonly record struct OverlayPlacement(int X, int Y, int Width, int He
 internal sealed class UsageOverlayWindow : Window
 {
     private const double OverlayHeightDip = 30d;
+    private const double IconSizeDip = 12d;
+    private const double IconStrokeThicknessDip = 1.5d;
+    private const double IconToTimestampGapDip = 4d;
+    internal const string ResetIconGeometryData = "M 1.75,5.25 C 2.4,2.8 5.05,1.35 7.45,2.15 C 8.55,2.5 9.45,3.25 10.1,4.25 M 10.1,1.65 L 10.1,4.25 L 7.5,4.25 M 10.25,6.75 C 9.6,9.2 6.95,10.65 4.55,9.85 C 3.45,9.5 2.55,8.75 1.9,7.75 M 1.9,10.35 L 1.9,7.75 L 4.5,7.75";
+    internal const string CreditIconGeometryData = "M 6,1.25 A 4.75,4.75 0 1 1 5.999,1.25 M 6,3.1 L 6,8.9 M 7.65,4.15 C 7.25,3.55 6.7,3.25 6,3.25 C 5.1,3.25 4.5,3.7 4.5,4.4 C 4.5,5.15 5.15,5.5 6,5.75 C 6.85,6 7.5,6.35 7.5,7.1 C 7.5,7.8 6.9,8.25 6,8.25 C 5.3,8.25 4.7,7.95 4.3,7.35";
     private readonly Border _container;
     private readonly Border _barFill;
     private readonly Border _barTrack;
     private readonly TextBlock _usageLabel;
     private readonly TextBlock _dateLabel;
     private readonly TextBlock _separator;
+    private readonly Path _resetIcon;
+    private readonly TextBlock _creditSeparator;
+    private readonly Path _creditIcon;
+    private readonly TextBlock _creditDateLabel;
     private readonly Border _usageToBarSpacer;
     private readonly Border _barToSeparatorSpacer;
-    private readonly Border _separatorToDateSpacer;
+    private readonly Border _separatorToResetIconSpacer;
+    private readonly Border _resetIconToDateSpacer;
+    private readonly Border _dateToCreditSeparatorSpacer;
+    private readonly Border _creditSeparatorToIconSpacer;
+    private readonly Border _creditIconToDateSpacer;
     private OverlayLayout _layout;
     private double _renderedWidthDip;
     private bool _clickable;
@@ -43,6 +57,10 @@ internal sealed class UsageOverlayWindow : Window
         _usageLabel = NewTextBlock();
         _dateLabel = NewTextBlock();
         _separator = NewTextBlock("|");
+        _resetIcon = NewTimestampIcon(ResetIconGeometryData);
+        _creditSeparator = NewTextBlock("|");
+        _creditIcon = NewTimestampIcon(CreditIconGeometryData);
+        _creditDateLabel = NewTextBlock();
         _barFill = new Border { Height = 5, HorizontalAlignment = HorizontalAlignment.Left, CornerRadius = new CornerRadius(3) };
         _barTrack = new Border
         {
@@ -62,9 +80,21 @@ internal sealed class UsageOverlayWindow : Window
         _barToSeparatorSpacer = Spacer(8);
         content.Children.Add(_barToSeparatorSpacer);
         content.Children.Add(_separator);
-        _separatorToDateSpacer = Spacer(8);
-        content.Children.Add(_separatorToDateSpacer);
+        _separatorToResetIconSpacer = Spacer(8);
+        content.Children.Add(_separatorToResetIconSpacer);
+        content.Children.Add(_resetIcon);
+        _resetIconToDateSpacer = Spacer(IconToTimestampGapDip);
+        content.Children.Add(_resetIconToDateSpacer);
         content.Children.Add(_dateLabel);
+        _dateToCreditSeparatorSpacer = Spacer(8);
+        content.Children.Add(_dateToCreditSeparatorSpacer);
+        content.Children.Add(_creditSeparator);
+        _creditSeparatorToIconSpacer = Spacer(8);
+        content.Children.Add(_creditSeparatorToIconSpacer);
+        content.Children.Add(_creditIcon);
+        _creditIconToDateSpacer = Spacer(IconToTimestampGapDip);
+        content.Children.Add(_creditIconToDateSpacer);
+        content.Children.Add(_creditDateLabel);
 
         _container = new Border
         {
@@ -88,6 +118,16 @@ internal sealed class UsageOverlayWindow : Window
 
     public event EventHandler? RetryRequested;
 
+    internal bool IsResetIconVisible => _resetIcon.Visibility == Visibility.Visible;
+    internal bool IsCreditIconVisible => _creditIcon.Visibility == Visibility.Visible;
+    internal double ResetIconWidth => _resetIcon.Width;
+    internal double ResetIconHeight => _resetIcon.Height;
+    internal double ResetIconStrokeThickness => _resetIcon.StrokeThickness;
+    internal double CreditIconWidth => _creditIcon.Width;
+    internal double CreditIconHeight => _creditIcon.Height;
+    internal double CreditIconStrokeThickness => _creditIcon.StrokeThickness;
+    internal double TimestampIconGap => _resetIconToDateSpacer.Width;
+
     internal void SetOwner(nint owner)
     {
         var interop = new WindowInteropHelper(this);
@@ -95,11 +135,23 @@ internal sealed class UsageOverlayWindow : Window
         interop.Owner = owner;
     }
 
-    public OverlayLayout Render(IndicatorState state, UsageSnapshot? snapshot, double availableWidth)
+    public OverlayLayout Render(
+        IndicatorState state,
+        UsageSnapshot? snapshot,
+        bool creditExpiryEnabled,
+        double availableWidth)
     {
         var isAvailable = state == IndicatorState.Available && snapshot is not null;
+        var showCreditDetails = isAvailable
+            && creditExpiryEnabled
+            && snapshot!.CreditExpiresAt is { } creditExpiresAt
+            && creditExpiresAt > DateTimeOffset.UtcNow;
         _clickable = state == IndicatorState.Unavailable;
         _dateLabel.Text = isAvailable ? IndicatorPresentation.FormatResetTime(snapshot!.ResetsAt) : "—";
+
+        _creditDateLabel.Text = showCreditDetails
+            ? IndicatorPresentation.FormatResetTime(snapshot!.CreditExpiresAt!.Value)
+            : string.Empty;
 
         var percentage = isAvailable ? snapshot!.RemainingPercent : 0;
         _barFill.Width = _barTrack.Width * percentage / 100;
@@ -110,9 +162,18 @@ internal sealed class UsageOverlayWindow : Window
                 ? PatternBrush(dotted: false)
                 : new SolidColorBrush(Color.FromRgb(82, 82, 91));
 
-        foreach (var layout in new[] { OverlayLayout.Full, OverlayLayout.Narrow, OverlayLayout.Compact })
+        var candidates = new List<(OverlayLayout Layout, bool ShowCreditDetails)>();
+        if (showCreditDetails)
         {
-            ApplyLayout(state, snapshot, layout);
+            candidates.Add((OverlayLayout.Full, true));
+        }
+
+        candidates.Add((OverlayLayout.Full, false));
+        candidates.Add((OverlayLayout.Narrow, false));
+        candidates.Add((OverlayLayout.Compact, false));
+        foreach (var candidate in candidates)
+        {
+            ApplyLayout(state, snapshot, candidate.Layout, candidate.ShowCreditDetails);
             _container.InvalidateMeasure();
             _container.Measure(new Size(double.PositiveInfinity, OverlayHeightDip));
             _renderedWidthDip = Math.Ceiling(_container.DesiredSize.Width);
@@ -120,7 +181,7 @@ internal sealed class UsageOverlayWindow : Window
             if (Width <= availableWidth)
             {
                 ApplyExtendedStyles();
-                return layout;
+                return candidate.Layout;
             }
         }
 
@@ -131,18 +192,32 @@ internal sealed class UsageOverlayWindow : Window
         return OverlayLayout.Hidden;
     }
 
-    private void ApplyLayout(IndicatorState state, UsageSnapshot? snapshot, OverlayLayout layout)
+    private void ApplyLayout(
+        IndicatorState state,
+        UsageSnapshot? snapshot,
+        OverlayLayout layout,
+        bool showCreditDetails)
     {
         _layout = layout;
         _usageLabel.Text = IndicatorPresentation.FormatUsageLabel(state, snapshot, layout);
+        var isAvailable = state == IndicatorState.Available && snapshot is not null;
         var showBar = layout is OverlayLayout.Full or OverlayLayout.Narrow;
         var showDetails = layout == OverlayLayout.Full;
+        var showResetIcon = showDetails && isAvailable;
         _usageToBarSpacer.Visibility = showBar ? Visibility.Visible : Visibility.Collapsed;
         _barTrack.Visibility = showBar ? Visibility.Visible : Visibility.Collapsed;
         _barToSeparatorSpacer.Visibility = showDetails ? Visibility.Visible : Visibility.Collapsed;
         _separator.Visibility = showDetails ? Visibility.Visible : Visibility.Collapsed;
-        _separatorToDateSpacer.Visibility = showDetails ? Visibility.Visible : Visibility.Collapsed;
+        _separatorToResetIconSpacer.Visibility = showDetails ? Visibility.Visible : Visibility.Collapsed;
+        _resetIcon.Visibility = showResetIcon ? Visibility.Visible : Visibility.Collapsed;
+        _resetIconToDateSpacer.Visibility = showResetIcon ? Visibility.Visible : Visibility.Collapsed;
         _dateLabel.Visibility = showDetails ? Visibility.Visible : Visibility.Collapsed;
+        _dateToCreditSeparatorSpacer.Visibility = showCreditDetails ? Visibility.Visible : Visibility.Collapsed;
+        _creditSeparator.Visibility = showCreditDetails ? Visibility.Visible : Visibility.Collapsed;
+        _creditSeparatorToIconSpacer.Visibility = showCreditDetails ? Visibility.Visible : Visibility.Collapsed;
+        _creditIcon.Visibility = showCreditDetails ? Visibility.Visible : Visibility.Collapsed;
+        _creditIconToDateSpacer.Visibility = showCreditDetails ? Visibility.Visible : Visibility.Collapsed;
+        _creditDateLabel.Visibility = showCreditDetails ? Visibility.Visible : Visibility.Collapsed;
     }
 
     internal void Position(nint codexWindowHandle, NativeMethods.Rect rect, UserSettings settings)
@@ -201,6 +276,21 @@ internal sealed class UsageOverlayWindow : Window
         Foreground = new SolidColorBrush(Color.FromRgb(244, 244, 245)),
         FontFamily = new FontFamily("Segoe UI"),
         FontSize = 12,
+        VerticalAlignment = VerticalAlignment.Center
+    };
+
+    private static Path NewTimestampIcon(string geometryData) => new()
+    {
+        Data = Geometry.Parse(geometryData),
+        Width = IconSizeDip,
+        Height = IconSizeDip,
+        Stretch = Stretch.None,
+        Stroke = new SolidColorBrush(Color.FromRgb(244, 244, 245)),
+        StrokeThickness = IconStrokeThicknessDip,
+        StrokeStartLineCap = PenLineCap.Round,
+        StrokeEndLineCap = PenLineCap.Round,
+        StrokeLineJoin = PenLineJoin.Round,
+        Fill = Brushes.Transparent,
         VerticalAlignment = VerticalAlignment.Center
     };
 

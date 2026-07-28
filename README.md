@@ -110,6 +110,7 @@ A successful fresh installation can legitimately report:
 ```text
 running: true
 indicator-enabled: true
+credit-expiry: disabled
 startup: disabled
 ```
 
@@ -150,25 +151,29 @@ Commands are case-sensitive and accept exactly one verb. Running
 ```text
 usage-indicator start             Start the GUI and return immediately
 usage-indicator stop              Stop the canonical running instance
-usage-indicator status            Inspect running, indicator, and startup state
+usage-indicator status            Inspect running, indicator, credit, and startup state
 usage-indicator version           Print the product version
 usage-indicator check-update      Report whether a stable update is available
 usage-indicator update            Verify, install, and validate a stable update
 usage-indicator enable-startup    Register or update current-user startup
 usage-indicator disable-startup   Remove positively recognized owned tasks
+usage-indicator enable-credit-expiry   Show returned reset-credit expiry details
+usage-indicator disable-credit-expiry  Hide reset-credit expiry details
 usage-indicator help              Show command help
 ```
 
 This installed `usage-indicator` command is the only public command interface.
-`start`, `stop`, `enable-startup`, and `disable-startup` are idempotent.
+`start`, `stop`, `enable-startup`, `disable-startup`,
+`enable-credit-expiry`, and `disable-credit-expiry` are idempotent.
 
 ## Status and exit codes
 
-`usage-indicator status` prints an exact, non-localized three-line record:
+`usage-indicator status` prints an exact, non-localized four-line record:
 
 ```text
 running: true|false
 indicator-enabled: true|false
+credit-expiry: enabled|disabled
 startup: enabled|disabled|unrecognized
 ```
 
@@ -176,6 +181,9 @@ startup: enabled|disabled|unrecognized
   application is stopped or startup is `unrecognized`.
 - `enable-startup` and `disable-startup` exit `2` when a foreign same-name
   scheduled task is preserved.
+- `enable-credit-expiry` and `disable-credit-expiry` exit `0` only after the
+  setting is persisted and any running indicator acknowledges the live change.
+  Persistence or live-application failures exit `1`.
 - Operational inspection, scheduler, settings, network, download, or update
   failures exit `1`.
 - Invalid, duplicate, combined, or incorrectly cased command syntax exits `2`
@@ -329,6 +337,21 @@ responses fail closed to `Usage unavailable`.
   available. Usage unavailable does not mean 0% remaining. Clicking it retries.
 - A percentage appears only after a verified ChatGPT-account response with an
   active reset window.
+- Reset-credit expiry is opt-in and disabled by default. Enable or disable it
+  immediately, without restarting a running indicator:
+
+  ```powershell
+  usage-indicator enable-credit-expiry
+  usage-indicator disable-credit-expiry
+  ```
+
+  When enabled, the Full layout can show the earliest valid future expiry among
+  available reset-credit detail rows returned by the same Codex app-server
+  usage response. It never displays the credit count. The optional segment is
+  absent when the returned detail has no usable future row, the account has no
+  available returned detail, or the installed Codex CLI/backend does not
+  provide the optional detail. Width pressure removes this segment before the
+  ordinary Full layout falls back to Narrow.
 - The overlay hides when no eligible Codex Desktop window is visible, while its
   window is minimized, or when the title bar is too narrow.
 - `Ctrl+Alt+U` enables or disables the overlay without changing Codex.
@@ -345,14 +368,16 @@ The settings schema is:
 {
   "Enabled": true,
   "HorizontalOffset": 0,
-  "VerticalOffset": 6
+  "VerticalOffset": 6,
+  "CreditExpiryEnabled": false
 }
 ```
 
 Offsets are logical pixels from `-500` through `500`. Missing, malformed, or
 invalid canonical settings fall back to defaults. Valid settings from the
 historical `%LOCALAPPDATA%\CodexUsageIndicator\settings.json` location migrate
-atomically only when canonical settings do not already exist.
+atomically only when canonical settings do not already exist. Existing settings
+files without `CreditExpiryEnabled` remain valid and default it to `false`.
 
 ## Troubleshooting
 

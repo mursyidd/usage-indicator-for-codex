@@ -127,6 +127,8 @@ try {
         'usage-indicator update',
         'usage-indicator enable-startup',
         'usage-indicator disable-startup',
+        'usage-indicator enable-credit-expiry',
+        'usage-indicator disable-credit-expiry',
         'usage-indicator help',
         'Keyboard shortcut:',
         'Ctrl+Alt+U    Turn the indicator display on or off while running',

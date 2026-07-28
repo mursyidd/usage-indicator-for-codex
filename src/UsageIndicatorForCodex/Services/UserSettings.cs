@@ -4,7 +4,11 @@ using System.Text;
 
 namespace UsageIndicatorForCodex.Services;
 
-public sealed record UserSettings(bool Enabled, double HorizontalOffset, double VerticalOffset)
+public sealed record UserSettings(
+    bool Enabled,
+    double HorizontalOffset,
+    double VerticalOffset,
+    bool CreditExpiryEnabled = false)
 {
     public static UserSettings Default { get; } = new(true, 0, 6);
 }
@@ -59,12 +63,12 @@ public sealed class UserSettingsStore
         return Migrate(legacySettings);
     }
 
-    internal bool InspectEnabled()
+    internal UserSettings Inspect()
     {
         var canonical = LoadStrictIfPresent(_path);
         if (canonical is not null)
         {
-            return canonical.Enabled;
+            return canonical;
         }
 
         if (_legacyPath is not null)
@@ -72,12 +76,14 @@ public sealed class UserSettingsStore
             var legacy = LoadStrictIfPresent(_legacyPath);
             if (legacy is not null)
             {
-                return legacy.Enabled;
+                return legacy;
             }
         }
 
-        return UserSettings.Default.Enabled;
+        return UserSettings.Default;
     }
+
+    internal bool InspectEnabled() => Inspect().Enabled;
 
     public void Save(UserSettings settings)
     {
@@ -240,7 +246,18 @@ public sealed class UserSettingsStore
             return null;
         }
 
-        return new UserSettings(enabled.GetBoolean(), horizontal, vertical);
+        var creditExpiryEnabled = false;
+        if (root.TryGetProperty(nameof(UserSettings.CreditExpiryEnabled), out var creditExpiry))
+        {
+            if (creditExpiry.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            {
+                return null;
+            }
+
+            creditExpiryEnabled = creditExpiry.GetBoolean();
+        }
+
+        return new UserSettings(enabled.GetBoolean(), horizontal, vertical, creditExpiryEnabled);
     }
 
     private static bool IsValid(UserSettings settings) =>

@@ -267,6 +267,8 @@ $requiredCommands = @(
     'update',
     'enable-startup',
     'disable-startup',
+    'enable-credit-expiry',
+    'disable-credit-expiry',
     'help'
 )
 foreach ($command in $requiredCommands) {

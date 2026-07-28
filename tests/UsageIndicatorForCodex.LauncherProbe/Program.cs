@@ -104,6 +104,8 @@ static void VerifyLauncher(string launcherPath)
             new[] { "version" },
             new[] { "enable-startup" },
             new[] { "disable-startup" },
+            new[] { "enable-credit-expiry" },
+            new[] { "disable-credit-expiry" },
             new[] { "help" },
             new[] { "help", "status" },
             new[] { "check-update", "extra" },
@@ -606,6 +608,8 @@ static int WriteManagedConsoleResult(IReadOnlyList<string> arguments)
           usage-indicator update
           usage-indicator enable-startup
           usage-indicator disable-startup
+          usage-indicator enable-credit-expiry
+          usage-indicator disable-credit-expiry
           usage-indicator help
 
         Keyboard shortcut:

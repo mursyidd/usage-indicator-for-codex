@@ -25,6 +25,13 @@ separately installed local Codex CLI. The companion starts only the selected
 - `account/read` with `refreshToken: false`; and
 - `account/rateLimits/read`.
 
+Optional reset-credit expiry is parsed only from the
+`rateLimitResetCredits` data returned inside that existing
+`account/rateLimits/read` result. It does not cause another app-server or
+network request, and the companion does not call private ChatGPT HTTP
+endpoints. Only the earliest valid future expiry among returned available
+detail rows can be displayed; credit counts are not displayed.
+
 It does not read credential files, browser profiles, tokens, or Codex Desktop
 package files. It does not perform login, logout, token refresh, authentication
 changes, model requests, thread or turn requests, CLI installation/update, or
@@ -41,9 +48,9 @@ responses scoped together. Predictable identities may still be guessable, so
 the fingerprint is account-derived data. It, the source identity, tokens, and
 usage values are not written to settings or logs.
 
-The canonical settings file contains only enabled state and layout offsets. A
-retained legacy settings file has the same boundary. Neither is a credential
-store.
+The canonical settings file contains only enabled state, layout offsets, and
+the non-sensitive credit-expiry display preference. A retained legacy settings
+file has the same boundary. Neither is a credential store.
 
 Reports requiring credential collection, raw authenticated responses, or
 weakened process boundaries must be rejected or redesigned around synthetic

@@ -5,7 +5,9 @@ namespace UsageIndicatorForCodex.Update;
 
 internal enum InstanceCommand
 {
-    Exit
+    Exit,
+    EnableCreditExpiry,
+    DisableCreditExpiry
 }
 
 internal sealed record InstanceIdentity(string MutexName, string PipeName);

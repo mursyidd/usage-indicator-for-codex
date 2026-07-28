@@ -19,7 +19,8 @@ owned `bin` entry to the current user's `PATH`. A standalone single-file
 `UsageIndicatorForCodex.UpdateHost.exe` is installed under sibling `updater`.
 The installed launcher provides
 the public `start`, `stop`, `status`, `version`, `check-update`, `update`,
-`enable-startup`, `disable-startup`, and `help` verbs. The GUI remains the
+`enable-startup`, `disable-startup`, `enable-credit-expiry`,
+`disable-credit-expiry`, and `help` verbs. The GUI remains the
 managed command host and is not a public executable interface. The release
 contains exactly the installer and its checksum. The installer displays
 repository `LICENSE` and installs its byte-identical copy as `LICENSE.txt`.
@@ -44,6 +45,15 @@ Display rules:
 - Fill the bar in proportion to the remaining percentage.
 - Do not animate or flash the indicator.
 
+The reset timestamp uses the approved double-refresh vector icon. When the
+persisted credit-expiry preference is enabled and the same app-server response
+contains a usable future reset-credit expiry, Full may append a separator,
+circular coin/credit icon, and local credit-expiry timestamp. The optional
+value is the earliest valid future expiry among available detail rows returned
+by app-server; the credit count is never displayed. Both icons are embedded WPF
+vector geometry rendered at approximately 12 by 12 DIP with 1.5-DIP round
+strokes and a 4-DIP icon-to-text gap.
+
 ## Colors
 
 - 50–100% remaining: green
@@ -64,7 +74,12 @@ Very narrow: Usage 100%
 Too narrow:  hidden
 ```
 
-The indicator returns automatically when sufficient space becomes available.
+The first Full candidate includes the optional credit segment; the second Full
+candidate contains only the ordinary reset detail. Both use
+`OverlayLayout.Full`, with no additional layout state. Width pressure removes
+credit details first, then follows the existing
+`Full -> Narrow -> Compact -> Hidden` model. The indicator returns
+automatically when sufficient space becomes available.
 
 ## Loading and Failure States
 
@@ -103,6 +118,12 @@ The usage value belongs only to the ChatGPT-authenticated account available thro
 The display intentionally remains the approved neutral wording (`Usage`); it does not claim that it follows the active Codex Desktop account. Codex Desktop determines overlay placement only.
 
 The CLI provider launches `app-server --stdio` only through the resolved path and uses only the stable `initialize`, `account/read` with `refreshToken: false`, and `account/rateLimits/read` flow. It does not send model, thread, turn, login, or logout requests; read credentials, browser data, tokens, or Desktop package files; or install, update, or replace the CLI.
+
+Optional credit expiry is read only from `rateLimitResetCredits` within the
+existing `account/rateLimits/read` result. It causes no additional app-server
+or network request. Missing, unsupported, malformed, incomplete, or expired
+optional detail hides only the credit segment and never makes valid ordinary
+usage unavailable.
 
 After changing the local CLI account, the user restarts the companion through
 the installed `usage-indicator` command. Startup performs the same safe,
@@ -215,6 +236,12 @@ Invalid, duplicate, or combined arguments fail without starting the
 application. Live CLI-account usage is enabled during normal operation, while
 automatic startup remains explicit.
 
+Credit expiry is disabled by default. `usage-indicator enable-credit-expiry`
+and `usage-indicator disable-credit-expiry` persist the preference and apply it
+immediately through the running instance when present, without refreshing
+usage. Status reports `credit-expiry: enabled` or `credit-expiry: disabled`
+between the indicator and startup lines.
+
 The installed uninstaller removes application files and only the PATH entry it
 recorded as owned. Before file removal it asks the installed CLI to remove
 positively recognized owned startup tasks. Foreign canonical and legacy tasks
@@ -224,7 +251,9 @@ disables its startup checkbox and performs zero startup mutation.
 The user may optionally delete local settings at
 `%LOCALAPPDATA%\UsageIndicatorForCodex` after installed uninstallation. During
 legacy migration, valid settings are copied atomically only when canonical
-settings do not already exist, and legacy settings remain for rollback. A
+settings do not already exist, and legacy settings remain for rollback.
+Existing settings without `CreditExpiryEnabled` remain valid and default it to
+`false`. A
 `CodexUsageIndicator` task is deleted only when its single executable action is
 a normalized fully qualified `CodexUsageIndicator.exe --background`; all
 unrecognized legacy forms are preserved.
@@ -253,6 +282,11 @@ The design is satisfied when:
 16. The installer displays repository `LICENSE`, installs `LICENSE.txt`, and the release contains exactly the installer and its checksum.
 17. Concurrent installed updates are rejected before network or process mutation.
 18. Startup ownership recognizes only the two exact canonical forms and the explicitly recognized legacy form; foreign tasks receive zero mutation.
+19. Optional credit expiry is disabled by default, uses only returned
+    `account/rateLimits/read` detail, never displays counts, and cannot make
+    ordinary usage unavailable.
+20. Detailed Full drops to ordinary Full before Narrow, without adding a layout
+    enum, and the live preference changes without restart or an extra request.
 
 ## Implementation Gate
 

@@ -32,6 +32,12 @@ public partial class App : System.Windows.Application
         }
 
         base.OnStartup(eventArgs);
+        if (options.Action is CommandLineAction.EnableCreditExpiry or CommandLineAction.DisableCreditExpiry)
+        {
+            _ = SetCreditExpiryAndShutdownAsync(options.Action == CommandLineAction.EnableCreditExpiry);
+            return;
+        }
+
         if (options.Action == CommandLineAction.EnableStartup)
         {
             try
@@ -83,9 +89,11 @@ public partial class App : System.Windows.Application
             try
             {
                 using var statusInstance = SingleInstanceService.CreateForCurrentUser();
+                var settings = new UserSettingsStore().Inspect();
                 var snapshot = new ApplicationStatusSnapshot(
                     !statusInstance.IsPrimary,
-                    new UserSettingsStore().InspectEnabled(),
+                    settings.Enabled,
+                    settings.CreditExpiryEnabled,
                     StartupTaskManager.Inspect(GetExecutablePath()));
                 CommandLineOutput.Show(snapshot.Format(), isError: false);
                 Shutdown(snapshot.ExitCode);
@@ -153,21 +161,32 @@ public partial class App : System.Windows.Application
 
     private async Task<bool> HandleInstanceCommandAsync(InstanceCommand command, CancellationToken cancellationToken)
     {
-        var operation = Dispatcher.InvokeAsync(async () =>
+        var operation = Dispatcher.InvokeAsync(() => ApplyInstanceCommand(_coordinator, command));
+        return await operation.Task;
+    }
+
+    internal static bool ApplyInstanceCommand(IndicatorCoordinator? coordinator, InstanceCommand command)
+    {
+        try
         {
-            if (command == InstanceCommand.Exit)
+            switch (command)
             {
-                return true;
+                case InstanceCommand.Exit:
+                    return true;
+                case InstanceCommand.EnableCreditExpiry when coordinator is not null:
+                    coordinator.SetCreditExpiryEnabled(true);
+                    return true;
+                case InstanceCommand.DisableCreditExpiry when coordinator is not null:
+                    coordinator.SetCreditExpiryEnabled(false);
+                    return true;
+                default:
+                    return false;
             }
-
-            if (_coordinator is null)
-            {
-                return false;
-            }
-
-            return command == InstanceCommand.Exit;
-        });
-        return await operation.Task.Unwrap();
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void HandleInstanceResponseSent(InstanceCommand command)
@@ -198,6 +217,55 @@ public partial class App : System.Windows.Application
             Shutdown(1);
         }
     }
+
+    private async Task SetCreditExpiryAndShutdownAsync(bool enabled)
+    {
+        try
+        {
+            using var instance = SingleInstanceService.CreateForCurrentUser();
+            var succeeded = await ApplyCreditExpirySettingAsync(
+                enabled,
+                new UserSettingsStore(),
+                instance);
+            if (!succeeded)
+            {
+                throw new InvalidOperationException("The running instance did not apply the setting.");
+            }
+
+            CommandLineOutput.Show(GetCreditExpirySuccessMessage(enabled), isError: false);
+            Shutdown(0);
+        }
+        catch (Exception exception)
+        {
+            CommandLineOutput.Show(
+                $"Credit expiry could not be {(enabled ? "enabled" : "disabled")}. {exception.Message}",
+                isError: true);
+            Shutdown(1);
+        }
+    }
+
+    internal static async Task<bool> ApplyCreditExpirySettingAsync(
+        bool enabled,
+        UserSettingsStore settingsStore,
+        SingleInstanceService instance)
+    {
+        ArgumentNullException.ThrowIfNull(settingsStore);
+        ArgumentNullException.ThrowIfNull(instance);
+        if (instance.IsPrimary)
+        {
+            var settings = settingsStore.Load();
+            settingsStore.Save(settings with { CreditExpiryEnabled = enabled });
+            return true;
+        }
+
+        var command = enabled
+            ? InstanceCommand.EnableCreditExpiry
+            : InstanceCommand.DisableCreditExpiry;
+        return await SingleInstanceService.TrySendAsync(instance.PipeNames, command) == true;
+    }
+
+    internal static string GetCreditExpirySuccessMessage(bool enabled) =>
+        enabled ? "Credit expiry enabled." : "Credit expiry disabled.";
 
     private static async Task<bool> StopRunningInstanceAsync()
     {

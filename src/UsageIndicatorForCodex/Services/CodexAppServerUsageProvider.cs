@@ -113,9 +113,11 @@ public sealed class CodexCliAppServerReader
 
             await SendAsync(writer, 3, "account/rateLimits/read", null, timeout.Token);
             using var usageResponse = await ReadResponseAsync(reader, 3, timeout.Token);
-            var windows = AppServerResponses.ExtractRateLimitWindows(usageResponse.RootElement.GetProperty("result"));
+            var result = usageResponse.RootElement.GetProperty("result");
+            var windows = AppServerResponses.ExtractRateLimitWindows(result);
+            var creditExpiresAt = AppServerResponses.ExtractEarliestResetCreditExpiry(result, DateTimeOffset.UtcNow);
 
-            return IndicatorPresentation.SelectMostRestrictive(fingerprint, windows);
+            return IndicatorPresentation.SelectMostRestrictive(fingerprint, windows, creditExpiresAt);
         }
         finally
         {

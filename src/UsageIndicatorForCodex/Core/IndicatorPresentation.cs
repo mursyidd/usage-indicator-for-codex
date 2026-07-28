@@ -27,13 +27,20 @@ public enum OverlayLayout
 
 public sealed record RateLimitWindow(int UsedPercent, DateTimeOffset ResetsAt);
 
-public sealed record UsageSnapshot(string AccountFingerprint, int RemainingPercent, DateTimeOffset ResetsAt);
+public sealed record UsageSnapshot(
+    string AccountFingerprint,
+    int RemainingPercent,
+    DateTimeOffset ResetsAt,
+    DateTimeOffset? CreditExpiresAt = null);
 
 public static class IndicatorPresentation
 {
     private const double ReservedTitleBarWidth = 480;
 
-    public static UsageSnapshot SelectMostRestrictive(string accountFingerprint, IEnumerable<RateLimitWindow> windows)
+    public static UsageSnapshot SelectMostRestrictive(
+        string accountFingerprint,
+        IEnumerable<RateLimitWindow> windows,
+        DateTimeOffset? creditExpiresAt = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(accountFingerprint);
 
@@ -54,7 +61,7 @@ public static class IndicatorPresentation
             throw new InvalidOperationException("No active rate-limit windows were available.");
         }
 
-        return new UsageSnapshot(accountFingerprint, 100 - selected.UsedPercent, selected.ResetsAt);
+        return new UsageSnapshot(accountFingerprint, 100 - selected.UsedPercent, selected.ResetsAt, creditExpiresAt);
     }
 
     public static IndicatorTone GetTone(int remainingPercent) => remainingPercent switch
