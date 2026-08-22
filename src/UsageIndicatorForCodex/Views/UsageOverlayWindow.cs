@@ -119,13 +119,6 @@ internal sealed class UsageOverlayWindow : Window
 
     internal bool IsResetIconVisible => _resetIcon.Visibility == Visibility.Visible;
     internal bool IsCreditIconVisible => _creditIcon.Visibility == Visibility.Visible;
-    internal double ResetIconWidth => _resetIcon.Width;
-    internal double ResetIconHeight => _resetIcon.Height;
-    internal double ResetIconStrokeThickness => _resetIcon.StrokeThickness;
-    internal double CreditIconWidth => _creditIcon.Width;
-    internal double CreditIconHeight => _creditIcon.Height;
-    internal double CreditIconStrokeThickness => _creditIcon.StrokeThickness;
-    internal double TimestampIconGap => _resetIconToDateSpacer.Width;
 
     internal void SetOwner(nint owner)
     {

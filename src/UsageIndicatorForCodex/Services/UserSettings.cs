@@ -83,8 +83,6 @@ public sealed class UserSettingsStore
         return UserSettings.Default;
     }
 
-    internal bool InspectEnabled() => Inspect().Enabled;
-
     public void Save(UserSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);

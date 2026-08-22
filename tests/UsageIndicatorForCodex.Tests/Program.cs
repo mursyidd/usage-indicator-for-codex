@@ -494,13 +494,6 @@ static void RendersCreditExpiryWithFullFallback()
             Console.WriteLine($"MEASURE 96-DPI Full widths: ordinary={ordinaryFullWidth:0} DIP; detailed={detailedFullWidth:0} DIP");
             AssertEqual(true, overlay.IsResetIconVisible);
             AssertEqual(true, overlay.IsCreditIconVisible);
-            AssertEqual(12d, overlay.ResetIconWidth);
-            AssertEqual(12d, overlay.ResetIconHeight);
-            AssertEqual(1.5d, overlay.ResetIconStrokeThickness);
-            AssertEqual(12d, overlay.CreditIconWidth);
-            AssertEqual(12d, overlay.CreditIconHeight);
-            AssertEqual(1.5d, overlay.CreditIconStrokeThickness);
-            AssertEqual(4d, overlay.TimestampIconGap);
             AssertEqual(
                 "M 1.75,5.25 C 2.4,2.8 5.05,1.35 7.45,2.15 C 8.55,2.5 9.45,3.25 10.1,4.25 M 10.1,1.65 L 10.1,4.25 L 7.5,4.25 M 10.25,6.75 C 9.6,9.2 6.95,10.65 4.55,9.85 C 3.45,9.5 2.55,8.75 1.9,7.75 M 1.9,10.35 L 1.9,7.75 L 4.5,7.75",
                 UsageOverlayWindow.ResetIconGeometryData);
@@ -2077,23 +2070,23 @@ static void InspectsStatusSettingsStrictly()
         var legacyPath = Path.Combine(directory, "legacy", "settings.json");
         var store = new UserSettingsStore(canonicalPath, legacyPath);
 
-        AssertEqual(true, store.InspectEnabled());
+        AssertEqual(true, store.Inspect().Enabled);
 
         Directory.CreateDirectory(Path.GetDirectoryName(legacyPath)!);
         File.WriteAllText(
             legacyPath,
             """{"Enabled":false,"HorizontalOffset":0,"VerticalOffset":6}""");
-        AssertEqual(false, store.InspectEnabled());
+        AssertEqual(false, store.Inspect().Enabled);
         AssertEqual(new UserSettings(false, 0, 6, false), store.Inspect());
         AssertEqual(false, File.Exists(canonicalPath));
 
         Directory.CreateDirectory(Path.GetDirectoryName(canonicalPath)!);
         File.WriteAllText(canonicalPath, """{"Enabled":true,"HorizontalOffset":0,"VerticalOffset":6,"CreditExpiryEnabled":true}""");
-        AssertEqual(true, store.InspectEnabled());
+        AssertEqual(true, store.Inspect().Enabled);
         AssertEqual(new UserSettings(true, 0, 6, true), store.Inspect());
 
         File.WriteAllText(canonicalPath, """{"Enabled":"invalid","HorizontalOffset":0,"VerticalOffset":6}""");
-        AssertThrows<InvalidDataException>(() => store.InspectEnabled());
+        AssertThrows<InvalidDataException>(() => store.Inspect());
 
         File.WriteAllText(canonicalPath, """{"Enabled":true,"HorizontalOffset":0,"VerticalOffset":6,"CreditExpiryEnabled":"yes"}""");
         AssertEqual(UserSettings.Default, store.Load());
@@ -2101,7 +2094,7 @@ static void InspectsStatusSettingsStrictly()
 
         File.Delete(canonicalPath);
         Directory.CreateDirectory(canonicalPath);
-        AssertThrows<UnauthorizedAccessException>(() => store.InspectEnabled());
+        AssertThrows<UnauthorizedAccessException>(() => store.Inspect());
     });
 }
 

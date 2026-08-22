@@ -40,47 +40,19 @@ public partial class App : System.Windows.Application
 
         if (options.Action == CommandLineAction.EnableStartup)
         {
-            try
-            {
-                StartupTaskManager.Install(GetExecutablePath());
-                CommandLineOutput.Show("Startup enabled.", isError: false);
-                Shutdown(0);
-            }
-            catch (StartupTaskOwnershipException exception)
-            {
-                CommandLineOutput.Show(exception.Message, isError: true);
-                Shutdown(exception.ExitCode);
-            }
-            catch (Exception exception)
-            {
-                CommandLineOutput.Show(
-                    $"Startup could not be enabled. {exception.Message}",
-                    isError: true);
-                Shutdown(1);
-            }
+            RunStartupCommand(
+                StartupTaskManager.Install,
+                "Startup enabled.",
+                "Startup could not be enabled.");
             return;
         }
 
         if (options.Action == CommandLineAction.DisableStartup)
         {
-            try
-            {
-                StartupTaskManager.Uninstall(GetExecutablePath());
-                CommandLineOutput.Show("Startup disabled.", isError: false);
-                Shutdown(0);
-            }
-            catch (StartupTaskOwnershipException exception)
-            {
-                CommandLineOutput.Show(exception.Message, isError: true);
-                Shutdown(exception.ExitCode);
-            }
-            catch (Exception exception)
-            {
-                CommandLineOutput.Show(
-                    $"Startup could not be disabled. {exception.Message}",
-                    isError: true);
-                Shutdown(1);
-            }
+            RunStartupCommand(
+                StartupTaskManager.Uninstall,
+                "Startup disabled.",
+                "Startup could not be disabled.");
             return;
         }
 
@@ -296,6 +268,31 @@ public partial class App : System.Windows.Application
         }
 
         return false;
+    }
+
+    private void RunStartupCommand(
+        Action<string> operation,
+        string successMessage,
+        string failureMessage)
+    {
+        try
+        {
+            operation(GetExecutablePath());
+            CommandLineOutput.Show(successMessage, isError: false);
+            Shutdown(0);
+        }
+        catch (StartupTaskOwnershipException exception)
+        {
+            CommandLineOutput.Show(exception.Message, isError: true);
+            Shutdown(exception.ExitCode);
+        }
+        catch (Exception exception)
+        {
+            CommandLineOutput.Show(
+                $"{failureMessage} {exception.Message}",
+                isError: true);
+            Shutdown(1);
+        }
     }
 
     private static string GetExecutablePath() =>
