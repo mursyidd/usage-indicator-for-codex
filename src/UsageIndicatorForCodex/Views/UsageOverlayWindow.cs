@@ -37,7 +37,6 @@ internal sealed class UsageOverlayWindow : Window
     private readonly Border _dateToCreditSeparatorSpacer;
     private readonly Border _creditSeparatorToIconSpacer;
     private readonly Border _creditIconToDateSpacer;
-    private OverlayLayout _layout;
     private double _renderedWidthDip;
     private bool _clickable;
 
@@ -185,7 +184,6 @@ internal sealed class UsageOverlayWindow : Window
             }
         }
 
-        _layout = OverlayLayout.Hidden;
         _renderedWidthDip = 0;
         Width = 0;
         ApplyExtendedStyles();
@@ -198,7 +196,6 @@ internal sealed class UsageOverlayWindow : Window
         OverlayLayout layout,
         bool showCreditDetails)
     {
-        _layout = layout;
         _usageLabel.Text = IndicatorPresentation.FormatUsageLabel(state, snapshot, layout);
         var isAvailable = state == IndicatorState.Available && snapshot is not null;
         var showBar = layout is OverlayLayout.Full or OverlayLayout.Narrow;

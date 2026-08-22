@@ -36,8 +36,6 @@ public static class StartupTaskManager
     internal const int OwnershipCollisionExitCode = 2;
     private const string BackgroundArgument = "--background";
 
-    internal static bool IsInstallationEnabled => true;
-
     public static void Install(string executablePath) =>
         Install(executablePath, new ComStartupTaskScheduler());
 
@@ -98,7 +96,7 @@ public static class StartupTaskManager
     internal static StartupTaskConfiguration CreateConfiguration(string userId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(userId);
-        return new StartupTaskConfiguration(userId, "--background", 3, "PT1M", "PT0S");
+        return new StartupTaskConfiguration(userId, BackgroundArgument, 3, "PT1M", "PT0S");
     }
 
     internal static StartupTaskState Inspect(string executablePath) =>

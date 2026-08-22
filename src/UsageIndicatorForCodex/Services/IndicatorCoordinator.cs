@@ -62,8 +62,6 @@ internal sealed class IndicatorCoordinator : IDisposable
         }
     }
 
-    public bool IsEnabled => _settings.Enabled;
-
     public void SetCreditExpiryEnabled(bool enabled)
     {
         if (_disposed)
@@ -83,33 +81,6 @@ internal sealed class IndicatorCoordinator : IDisposable
         {
             UpdatePlacement();
         }
-    }
-
-    public Task<bool> RevalidateAsync()
-    {
-        if (_disposed)
-        {
-            return Task.FromResult(false);
-        }
-
-        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _ = CompleteRevalidationWhenRefreshFinishesAsync(
-            _refreshRunner.ReplaceAsync(cancellationToken => RevalidateOnceAsync(cancellationToken, completion)),
-            completion);
-        return completion.Task;
-    }
-
-    private static async Task CompleteRevalidationWhenRefreshFinishesAsync(Task refresh, TaskCompletionSource<bool> completion)
-    {
-        try
-        {
-            await refresh;
-        }
-        catch
-        {
-        }
-
-        completion.TrySetResult(false);
     }
 
     private void TrackerOnWindowChanged(object? sender, CodexWindowChangedEventArgs eventArgs)
@@ -207,39 +178,6 @@ internal sealed class IndicatorCoordinator : IDisposable
                 _lastRefresh = DateTimeOffset.UtcNow;
                 Render(IndicatorState.Unavailable, null);
             }
-        }
-    }
-
-    private async Task RevalidateOnceAsync(CancellationToken cancellationToken, TaskCompletionSource<bool> completion)
-    {
-        try
-        {
-            var snapshot = await _usageProvider.ReadAsync(cancellationToken);
-            if (_disposed || cancellationToken.IsCancellationRequested)
-            {
-                completion.TrySetResult(false);
-                return;
-            }
-
-            if (_settings.Enabled && _activeCodexWindow != 0 && !_activeCodexWindowIsMinimized)
-            {
-                ApplySnapshot(snapshot);
-            }
-
-            completion.TrySetResult(true);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            completion.TrySetResult(false);
-        }
-        catch (Exception)
-        {
-            if (!_disposed && _settings.Enabled && _activeCodexWindow != 0 && !_activeCodexWindowIsMinimized)
-            {
-                Render(IndicatorState.Unavailable, null);
-            }
-
-            completion.TrySetResult(false);
         }
     }
 

@@ -24,24 +24,6 @@ internal sealed class CoalescingRefreshRunner
         }
     }
 
-    public Task ReplaceAsync(Func<CancellationToken, Task> operation)
-    {
-        ArgumentNullException.ThrowIfNull(operation);
-
-        lock (_sync)
-        {
-            if (!_activeRun.IsCompleted)
-            {
-                _pendingOperation = operation;
-                _activeCancellation?.Cancel();
-                return _activeRun;
-            }
-
-            _activeRun = DrainAsync(operation);
-            return _activeRun;
-        }
-    }
-
     public void Cancel()
     {
         lock (_sync)

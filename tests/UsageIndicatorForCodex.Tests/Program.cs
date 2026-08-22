@@ -102,7 +102,6 @@ var checks = new (string Name, Action Run)[]
     ("keeps overlay placement deterministic across monitor DPI changes", KeepsOverlayPlacementDeterministicAcrossDpiChanges),
     ("measures layouts against available title-bar space", MeasuresLayoutsAgainstAvailableWidth),
     ("coalesces overlapping refresh requests", CoalescesOverlappingRefreshRequests),
-    ("cancels and replaces refresh requests", CancelsAndReplacesRefreshRequests),
     ("parses application commands strictly", ParsesApplicationCommandsStrictly),
     ("applies credit-expiry commands to stopped and running instances", AppliesCreditExpiryCommands),
     ("re-renders credit-expiry preference without refreshing usage", ReRendersCreditExpiryPreferenceWithoutRefresh),
@@ -163,8 +162,6 @@ var checks = new (string Name, Action Run)[]
     ("preserves a canonical settings race winner", PreservesCanonicalSettingsRaceWinner),
     ("saves settings without abandoned temporary files", SavesSettingsAtomically),
     ("terminates a provider process tree", TerminatesProcessTree),
-    ("enables production live usage for the configured CLI account", ProductionProviderIsEnabled),
-    ("enables production startup installation", StartupInstallationIsEnabled),
     ("scopes production startup to the installing user", ScopesStartupToInstallingUser),
     ("recognizes canonical and legacy startup states", RecognizesStartupStates),
     ("recognizes launcher-backed canonical startup states", RecognizesLauncherBackedCanonicalStartupStates),
@@ -582,42 +579,6 @@ static void CoalescesOverlappingRefreshRequests()
     Task.WhenAll(first, second, third).GetAwaiter().GetResult();
 
     AssertEqual(2, executions);
-}
-
-static void CancelsAndReplacesRefreshRequests()
-{
-    var runner = new CoalescingRefreshRunner();
-    var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var firstCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var replacementRan = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    async Task First(CancellationToken cancellationToken)
-    {
-        firstStarted.SetResult();
-        try
-        {
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            firstCancelled.SetResult();
-            throw;
-        }
-    }
-
-    Task Replacement(CancellationToken _)
-    {
-        replacementRan.SetResult();
-        return Task.CompletedTask;
-    }
-
-    var first = runner.RunAsync(First);
-    firstStarted.Task.GetAwaiter().GetResult();
-    var replacement = runner.ReplaceAsync(Replacement);
-    Task.WhenAll(first, replacement).GetAwaiter().GetResult();
-
-    AssertEqual(true, firstCancelled.Task.IsCompleted);
-    AssertEqual(true, replacementRan.Task.IsCompleted);
 }
 
 static void ParsesApplicationCommandsStrictly()
@@ -2286,16 +2247,6 @@ static void TerminatesProcessTree()
 
     CodexCliAppServerReader.StopProcessTreeAsync(process).GetAwaiter().GetResult();
     AssertEqual(true, process.HasExited);
-}
-
-static void ProductionProviderIsEnabled()
-{
-    AssertEqual(true, CodexAppServerUsageProvider.IsLiveUsageEnabled);
-}
-
-static void StartupInstallationIsEnabled()
-{
-    AssertEqual(true, StartupTaskManager.IsInstallationEnabled);
 }
 
 static void ScopesStartupToInstallingUser()

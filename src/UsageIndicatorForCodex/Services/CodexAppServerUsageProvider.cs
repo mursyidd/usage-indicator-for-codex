@@ -12,8 +12,6 @@ public interface IUsageProvider
 
 public sealed class CodexAppServerUsageProvider : IUsageProvider
 {
-    public static bool IsLiveUsageEnabled => true;
-
     public Task<UsageSnapshot> ReadAsync(CancellationToken cancellationToken) =>
         new CodexCliAppServerReader().ReadAsync(cancellationToken);
 }
