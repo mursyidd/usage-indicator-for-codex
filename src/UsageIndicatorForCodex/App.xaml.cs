@@ -17,84 +17,105 @@ public partial class App : System.Windows.Application
     {
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         var options = CommandLineOptions.Parse(eventArgs.Args);
-        if (options.Action is CommandLineAction.Help or CommandLineAction.Invalid)
+        if (TryHandleBeforeInitialization(options))
         {
-            CommandLineOutput.Show(options.Message, options.Action == CommandLineAction.Invalid);
-            Shutdown(options.ExitCode);
-            return;
-        }
-
-        if (options.Action == CommandLineAction.Version)
-        {
-            CommandLineOutput.Show($"usage-indicator {ProductInfo.Version}", isError: false);
-            Shutdown(0);
             return;
         }
 
         base.OnStartup(eventArgs);
-        if (options.Action is CommandLineAction.EnableCreditExpiry or CommandLineAction.DisableCreditExpiry)
+        if (TryHandleAfterInitialization(options))
         {
-            _ = SetCreditExpiryAndShutdownAsync(options.Action == CommandLineAction.EnableCreditExpiry);
             return;
         }
 
-        if (options.Action == CommandLineAction.EnableStartup)
-        {
-            RunStartupCommand(
-                StartupTaskManager.Install,
-                "Startup enabled.",
-                "Startup could not be enabled.");
-            return;
-        }
+        StartIndicator(options);
+    }
 
-        if (options.Action == CommandLineAction.DisableStartup)
+    // Commands answered without initializing WPF. base.OnStartup has not run
+    // yet, so these must not touch framework state.
+    private bool TryHandleBeforeInitialization(CommandLineOptions options)
+    {
+        switch (options.Action)
         {
-            RunStartupCommand(
-                StartupTaskManager.Uninstall,
-                "Startup disabled.",
-                "Startup could not be disabled.");
-            return;
+            case CommandLineAction.Help:
+            case CommandLineAction.Invalid:
+                CommandLineOutput.Show(options.Message, options.Action == CommandLineAction.Invalid);
+                Shutdown(options.ExitCode);
+                return true;
+            case CommandLineAction.Version:
+                CommandLineOutput.Show($"usage-indicator {ProductInfo.Version}", isError: false);
+                Shutdown(0);
+                return true;
+            default:
+                return false;
         }
+    }
 
-        if (options.Action == CommandLineAction.Status)
+    // Commands that run after base.OnStartup because they depend on the
+    // dispatcher, but that shut down instead of showing the overlay.
+    private bool TryHandleAfterInitialization(CommandLineOptions options)
+    {
+        switch (options.Action)
         {
-            try
-            {
-                using var statusInstance = SingleInstanceService.CreateForCurrentUser();
-                var settings = new UserSettingsStore().Inspect();
-                var snapshot = new ApplicationStatusSnapshot(
-                    !statusInstance.IsPrimary,
-                    settings.Enabled,
-                    settings.CreditExpiryEnabled,
-                    StartupTaskManager.Inspect(GetExecutablePath()));
-                CommandLineOutput.Show(snapshot.Format(), isError: false);
-                Shutdown(snapshot.ExitCode);
-            }
-            catch (Exception exception)
-            {
+            case CommandLineAction.EnableCreditExpiry:
+            case CommandLineAction.DisableCreditExpiry:
+                _ = SetCreditExpiryAndShutdownAsync(options.Action == CommandLineAction.EnableCreditExpiry);
+                return true;
+            case CommandLineAction.EnableStartup:
+                RunStartupCommand(
+                    StartupTaskManager.Install,
+                    "Startup enabled.",
+                    "Startup could not be enabled.");
+                return true;
+            case CommandLineAction.DisableStartup:
+                RunStartupCommand(
+                    StartupTaskManager.Uninstall,
+                    "Startup disabled.",
+                    "Startup could not be disabled.");
+                return true;
+            case CommandLineAction.Status:
+                ShowStatus();
+                return true;
+            case CommandLineAction.Stop:
+                _ = StopAndShutdownAsync();
+                return true;
+            case CommandLineAction.CheckUpdate:
+            case CommandLineAction.Update:
                 CommandLineOutput.Show(
-                    $"Status inspection failed. {exception.Message}",
+                    "Update commands must be invoked through usage-indicator.exe.",
                     isError: true);
                 Shutdown(1);
-            }
-            return;
+                return true;
+            default:
+                return false;
         }
+    }
 
-        if (options.Action == CommandLineAction.Stop)
+    private void ShowStatus()
+    {
+        try
         {
-            _ = StopAndShutdownAsync();
-            return;
+            using var statusInstance = SingleInstanceService.CreateForCurrentUser();
+            var settings = new UserSettingsStore().Inspect();
+            var snapshot = new ApplicationStatusSnapshot(
+                !statusInstance.IsPrimary,
+                settings.Enabled,
+                settings.CreditExpiryEnabled,
+                StartupTaskManager.Inspect(GetExecutablePath()));
+            CommandLineOutput.Show(snapshot.Format(), isError: false);
+            Shutdown(snapshot.ExitCode);
         }
-
-        if (options.Action is CommandLineAction.CheckUpdate or CommandLineAction.Update)
+        catch (Exception exception)
         {
             CommandLineOutput.Show(
-                "Update commands must be invoked through usage-indicator.exe.",
+                $"Status inspection failed. {exception.Message}",
                 isError: true);
             Shutdown(1);
-            return;
         }
+    }
 
+    private void StartIndicator(CommandLineOptions options)
+    {
         if (options.Action == CommandLineAction.Run)
         {
             _ = TryMigrateLegacyStartup(GetExecutablePath, StartupTaskManager.TryMigrateLegacyTask);

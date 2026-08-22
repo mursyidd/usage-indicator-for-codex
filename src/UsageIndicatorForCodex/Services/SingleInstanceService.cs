@@ -109,6 +109,9 @@ internal sealed class SingleInstanceService : IDisposable
         return null;
     }
 
+    // Deliberately narrower than PipeNames: exit is delivered only to the
+    // canonical pipe, while credit-expiry commands reach every known identity.
+    // CoordinatesCanonicalAndLegacyInstances pins this single-entry contract.
     internal IReadOnlyList<string> GetPipeNamesForExit() => [PipeName];
 
     private static IReadOnlyList<InstanceIdentity> CreateIdentities(string userIdentity) =>
